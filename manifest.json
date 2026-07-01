@@ -1,0 +1,16 @@
+[
+  {
+    "name": "novaplayer",
+    "description": "Fullscreen cinematic Spicetify player with WebGL point-cloud cover art, synced lyrics, queue, playlists, and media controls.",
+    "preview": "preview.png",
+    "main": "novaplayer.js",
+    "readme": "README.md",
+    "authors": [
+      {
+        "name": "faceplantDev",
+        "url": "https://github.com/faceplantDev"
+      }
+    ],
+    "tags": ["player", "lyrics", "visualizer", "fullscreen"]
+  }
+]
