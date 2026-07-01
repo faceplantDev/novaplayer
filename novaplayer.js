@@ -445,6 +445,7 @@
 		coverEcho: root.querySelector(".novaplayer__cover-echo"),
 		aura: root.querySelector(".novaplayer__aura"),
 		lyrics: root.querySelector(".novaplayer__lyrics"),
+		lyricMeta: root.querySelector(".novaplayer__lyric-meta"),
 		lyricPrev: root.querySelector(".novaplayer__lyric-prev"),
 		vocalRole: root.querySelector(".novaplayer__vocal-role"),
 		lyricCurrent: root.querySelector(".novaplayer__lyric-current"),
@@ -724,17 +725,17 @@
 
 	function applyStageSettings() {
 		const settings = state.settings;
-		setStyleProperty(root, "--mr-cloud-brightness", settings.cloudBrightness.toFixed(3));
-		setStyleProperty(root, "--mr-cloud-saturation", settings.cloudSaturation.toFixed(3));
-		setStyleProperty(root, "--mr-star-opacity", settings.starIntensity.toFixed(3));
-		setStyleProperty(root, "--mr-cosmos-brightness", settings.cosmosBrightness.toFixed(3));
-		setStyleProperty(root, "--mr-word-glow", settings.wordGlow.toFixed(3));
-		setStyleProperty(root, "--mr-layout-lyrics-x", `${settings.lyricsOffsetX.toFixed(1)}px`);
-		setStyleProperty(root, "--mr-layout-lyrics-y", `${settings.lyricsOffsetY.toFixed(1)}px`);
-		setStyleProperty(root, "--mr-layout-cloud-x", `${settings.cloudOffsetX.toFixed(1)}px`);
-		setStyleProperty(root, "--mr-layout-cloud-y", `${settings.cloudOffsetY.toFixed(1)}px`);
-		setStyleProperty(root, "--mr-layout-player-x", `${settings.playerOffsetX.toFixed(1)}px`);
-		setStyleProperty(root, "--mr-layout-player-y", `${settings.playerOffsetY.toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-cloud-brightness", settings.cloudBrightness.toFixed(3));
+		setStyleProperty(root, "--novaplayer-cloud-saturation", settings.cloudSaturation.toFixed(3));
+		setStyleProperty(root, "--novaplayer-star-opacity", settings.starIntensity.toFixed(3));
+		setStyleProperty(root, "--novaplayer-cosmos-brightness", settings.cosmosBrightness.toFixed(3));
+		setStyleProperty(root, "--novaplayer-word-glow", settings.wordGlow.toFixed(3));
+		setStyleProperty(root, "--novaplayer-layout-lyrics-x", `${settings.lyricsOffsetX.toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-layout-lyrics-y", `${settings.lyricsOffsetY.toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-layout-cloud-x", `${settings.cloudOffsetX.toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-layout-cloud-y", `${settings.cloudOffsetY.toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-layout-player-x", `${settings.playerOffsetX.toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-layout-player-y", `${settings.playerOffsetY.toFixed(1)}px`);
 		visualizer.setOptions?.(getEffectiveVisualizerOptions());
 	}
 
@@ -877,7 +878,7 @@
 		if (force) {
 			setDebugValue("playerRect", formatRect(dom.player));
 			setDebugValue("queueRect", formatRect(dom.queue));
-			setDebugValue("colors", `${cssVar("--mr-hot")} / ${cssVar("--mr-cyan")}`);
+			setDebugValue("colors", `${cssVar("--novaplayer-hot")} / ${cssVar("--novaplayer-cyan")}`);
 		}
 		if (force) {
 			setDebugValue("snapshot", "Run for 5-10 seconds, switch profiles if needed, then press Copy and send the copied JSON.");
@@ -975,12 +976,12 @@
 				artist: state.trackInfo?.artist || "",
 			},
 			colors: {
-				hot: cssVar("--mr-hot"),
-				cyan: cssVar("--mr-cyan"),
-				lime: cssVar("--mr-lime"),
-				bg1: cssVar("--mr-bg-1"),
-				bg2: cssVar("--mr-bg-2"),
-				bg3: cssVar("--mr-bg-3"),
+				hot: cssVar("--novaplayer-hot"),
+				cyan: cssVar("--novaplayer-cyan"),
+				lime: cssVar("--novaplayer-lime"),
+				bg1: cssVar("--novaplayer-bg-1"),
+				bg2: cssVar("--novaplayer-bg-2"),
+				bg3: cssVar("--novaplayer-bg-3"),
 			},
 			env: {
 				userAgent: navigator.userAgent,
@@ -1262,6 +1263,7 @@
 	function clearMotionStyles() {
 		setStyleValue(dom.cloud, "transform", "");
 		setStyleValue(dom.lyrics, "transform", "");
+		setStyleValue(dom.lyricMeta, "transform", "");
 		setStyleValue(dom.player, "transform", "");
 		visualizer.setMotion?.({ pitch: 0, yaw: 0, roll: 0 });
 		Object.assign(state.motion, {
@@ -1352,6 +1354,7 @@
 				visualizer.setMotion?.({ pitch: motion.cloudPitch, yaw: motion.cloudYaw, roll: motion.cloudRoll });
 				setStyleValue(dom.cloud, "transform", `translate(calc(-50% + ${cloudX.toFixed(2)}px), calc(-50% + ${cloudY.toFixed(2)}px)) rotate(${coverRot.toFixed(3)}deg) scale(1)`);
 				setStyleValue(dom.lyrics, "transform", `translate(calc(-50% + ${lyricsX.toFixed(2)}px), calc(-50% + ${lyricsY.toFixed(2)}px)) perspective(1180px) rotateX(${motion.lyricsPitch.toFixed(3)}deg) rotateY(${motion.lyricsYaw.toFixed(3)}deg) rotateZ(${motion.lyricsRoll.toFixed(3)}deg)`);
+				setStyleValue(dom.lyricMeta, "transform", `translate(calc(-50% + ${lyricsX.toFixed(2)}px), calc(-50% + ${lyricsY.toFixed(2)}px))`);
 				setStyleValue(dom.player, "transform", `translateX(calc(-50% + ${playerX.toFixed(2)}px)) translateY(${playerY.toFixed(2)}px) scale(${motion.playerScale.toFixed(4)})`);
 				state.lastMotionUpdate = time;
 				state.motionStylesApplied = true;
@@ -1416,8 +1419,8 @@
 		}
 
 		clearMotionStyles();
-		setStyleProperty(dom.cosmos, "--mr-flow-opacity", "0.28");
-		setStyleProperty(dom.cosmos, "--mr-flow-scale", "1");
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-opacity", "0.28");
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-scale", "1");
 		visualizer.pause();
 		state.targetTiltX = 0;
 		state.targetTiltY = 0;
@@ -1526,7 +1529,7 @@
 	function applyCover(cover) {
 		const image = normalizeCoverUrl(cover || fallbackCover);
 
-		root.style.setProperty("--mr-cover", cssBackground(image));
+		root.style.setProperty("--novaplayer-cover", cssBackground(image));
 		visualizer.setCover(image, state.trackUri);
 	}
 
@@ -1702,23 +1705,23 @@
 		flow.rotate = lerp(flow.rotate, rotate, smooth);
 		state.flowReady = true;
 
-		setStyleProperty(dom.cosmos, "--mr-flow-x", `${flow.x.toFixed(2)}%`);
-		setStyleProperty(dom.cosmos, "--mr-flow-y", `${flow.y.toFixed(2)}%`);
-		setStyleProperty(dom.cosmos, "--mr-flow-alt-x", `${flow.altX.toFixed(2)}%`);
-		setStyleProperty(dom.cosmos, "--mr-flow-alt-y", `${flow.altY.toFixed(2)}%`);
-		setStyleProperty(dom.cosmos, "--mr-flow-third-x", `${flow.thirdX.toFixed(2)}%`);
-		setStyleProperty(dom.cosmos, "--mr-flow-third-y", `${flow.thirdY.toFixed(2)}%`);
-		setStyleProperty(dom.cosmos, "--mr-flow-opacity", flow.opacity.toFixed(3));
-		setStyleProperty(dom.cosmos, "--mr-flow-scale", flow.scale.toFixed(3));
-		setStyleProperty(dom.cosmos, "--mr-flow-saturation", flow.saturation.toFixed(3));
-		setStyleProperty(dom.cosmos, "--mr-flow-blur", `${flow.blur.toFixed(1)}px`);
-		setStyleProperty(dom.cosmos, "--mr-flow-shift-x", `${((flow.x - 50) * 0.32 * motionAmount).toFixed(2)}px`);
-		setStyleProperty(dom.cosmos, "--mr-flow-shift-y", `${((flow.y - 50) * 0.24 * motionAmount).toFixed(2)}px`);
-		setStyleProperty(dom.cosmos, "--mr-nebula-opacity", flow.nebulaOpacity.toFixed(3));
-		setStyleProperty(dom.cosmos, "--mr-nebula-hot-alpha", flow.hotAlpha.toFixed(3));
-		setStyleProperty(dom.cosmos, "--mr-nebula-cyan-alpha", flow.cyanAlpha.toFixed(3));
-		setStyleProperty(dom.cosmos, "--mr-nebula-lime-alpha", flow.limeAlpha.toFixed(3));
-		setStyleProperty(dom.cosmos, "--mr-nebula-rotate", `${flow.rotate.toFixed(3)}deg`);
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-x", `${flow.x.toFixed(2)}%`);
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-y", `${flow.y.toFixed(2)}%`);
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-alt-x", `${flow.altX.toFixed(2)}%`);
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-alt-y", `${flow.altY.toFixed(2)}%`);
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-third-x", `${flow.thirdX.toFixed(2)}%`);
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-third-y", `${flow.thirdY.toFixed(2)}%`);
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-opacity", flow.opacity.toFixed(3));
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-scale", flow.scale.toFixed(3));
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-saturation", flow.saturation.toFixed(3));
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-blur", `${flow.blur.toFixed(1)}px`);
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-shift-x", `${((flow.x - 50) * 0.32 * motionAmount).toFixed(2)}px`);
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-shift-y", `${((flow.y - 50) * 0.24 * motionAmount).toFixed(2)}px`);
+		setStyleProperty(dom.cosmos, "--novaplayer-nebula-opacity", flow.nebulaOpacity.toFixed(3));
+		setStyleProperty(dom.cosmos, "--novaplayer-nebula-hot-alpha", flow.hotAlpha.toFixed(3));
+		setStyleProperty(dom.cosmos, "--novaplayer-nebula-cyan-alpha", flow.cyanAlpha.toFixed(3));
+		setStyleProperty(dom.cosmos, "--novaplayer-nebula-lime-alpha", flow.limeAlpha.toFixed(3));
+		setStyleProperty(dom.cosmos, "--novaplayer-nebula-rotate", `${flow.rotate.toFixed(3)}deg`);
 	}
 
 	function getMusicEnergy(seconds) {
@@ -2048,13 +2051,13 @@
 		const node = document.createElement("div");
 		node.className = "novaplayer__back-vocal";
 		node.textContent = text;
-		node.style.setProperty("--mr-back-x", `${x.toFixed(2)}vw`);
-		node.style.setProperty("--mr-back-y", `${y.toFixed(2)}vh`);
-		node.style.setProperty("--mr-back-drift-x", `${lerp(-34, 34, seededRandom(`${seedBase}:dx`)).toFixed(2)}px`);
-		node.style.setProperty("--mr-back-drift-y", `${lerp(-38, -18, seededRandom(`${seedBase}:dy`)).toFixed(2)}px`);
-		node.style.setProperty("--mr-back-tilt-x", `${lerp(-8, 8, seededRandom(`${seedBase}:tx`)).toFixed(2)}deg`);
-		node.style.setProperty("--mr-back-tilt-y", `${lerp(-18, 18, seededRandom(`${seedBase}:ty`)).toFixed(2)}deg`);
-		node.style.setProperty("--mr-back-tilt-z", `${lerp(-8, 8, seededRandom(`${seedBase}:tz`)).toFixed(2)}deg`);
+		node.style.setProperty("--novaplayer-back-x", `${x.toFixed(2)}vw`);
+		node.style.setProperty("--novaplayer-back-y", `${y.toFixed(2)}vh`);
+		node.style.setProperty("--novaplayer-back-drift-x", `${lerp(-34, 34, seededRandom(`${seedBase}:dx`)).toFixed(2)}px`);
+		node.style.setProperty("--novaplayer-back-drift-y", `${lerp(-38, -18, seededRandom(`${seedBase}:dy`)).toFixed(2)}px`);
+		node.style.setProperty("--novaplayer-back-tilt-x", `${lerp(-8, 8, seededRandom(`${seedBase}:tx`)).toFixed(2)}deg`);
+		node.style.setProperty("--novaplayer-back-tilt-y", `${lerp(-18, 18, seededRandom(`${seedBase}:ty`)).toFixed(2)}deg`);
+		node.style.setProperty("--novaplayer-back-tilt-z", `${lerp(-8, 8, seededRandom(`${seedBase}:tz`)).toFixed(2)}deg`);
 		dom.backs.append(node);
 		node.addEventListener("animationend", () => node.remove(), { once: true });
 	}
@@ -2087,7 +2090,7 @@
 				span.dataset.wordStart = String(Math.round(timing.start));
 				span.dataset.wordEnd = String(Math.round(timing.end));
 			}
-			span.style.setProperty("--mr-word-progress", "0%");
+			span.style.setProperty("--novaplayer-word-progress", "0%");
 			dom.lyricCurrent.append(span);
 			wordIndex += 1;
 		}
@@ -2168,7 +2171,7 @@
 					? clamp((state.progressMs - start + 30) / (end - start), 0, 1)
 					: 1;
 			}
-			word.style.setProperty("--mr-word-progress", `${(-18 + progress * 138).toFixed(2)}%`);
+			word.style.setProperty("--novaplayer-word-progress", `${(-18 + progress * 138).toFixed(2)}%`);
 		}
 	}
 
@@ -2466,13 +2469,13 @@
 			item.classList.toggle("is-next", isFront);
 			item.classList.toggle("is-past", relative < 0);
 			item.classList.toggle("is-hidden", !visible);
-			item.style.setProperty("--mr-depth-x", "0px");
-			item.style.setProperty("--mr-depth-y", "0px");
-			item.style.setProperty("--mr-depth-z", "0px");
-			item.style.setProperty("--mr-depth-rotate", "0deg");
-			item.style.setProperty("--mr-depth-scale", "1");
-			item.style.setProperty("--mr-depth-opacity", opacity.toFixed(3));
-			item.style.setProperty("--mr-depth-blur", "0px");
+			item.style.setProperty("--novaplayer-depth-x", "0px");
+			item.style.setProperty("--novaplayer-depth-y", "0px");
+			item.style.setProperty("--novaplayer-depth-z", "0px");
+			item.style.setProperty("--novaplayer-depth-rotate", "0deg");
+			item.style.setProperty("--novaplayer-depth-scale", "1");
+			item.style.setProperty("--novaplayer-depth-opacity", opacity.toFixed(3));
+			item.style.setProperty("--novaplayer-depth-blur", "0px");
 			item.style.zIndex = String(100 - Math.max(0, relative));
 		}
 	}
@@ -2792,12 +2795,12 @@
 
 	function readCurrentPaletteRaw() {
 		const current = {
-			hot: parseCssColor(cssVar("--mr-hot")),
-			cyan: parseCssColor(cssVar("--mr-cyan")),
-			lime: parseCssColor(cssVar("--mr-lime")),
-			bg1: parseCssColor(cssVar("--mr-bg-1")),
-			bg2: parseCssColor(cssVar("--mr-bg-2")),
-			bg3: parseCssColor(cssVar("--mr-bg-3")),
+			hot: parseCssColor(cssVar("--novaplayer-hot")),
+			cyan: parseCssColor(cssVar("--novaplayer-cyan")),
+			lime: parseCssColor(cssVar("--novaplayer-lime")),
+			bg1: parseCssColor(cssVar("--novaplayer-bg-1")),
+			bg2: parseCssColor(cssVar("--novaplayer-bg-2")),
+			bg3: parseCssColor(cssVar("--novaplayer-bg-3")),
 		};
 		return Object.values(current).every(Boolean) ? current : null;
 	}
@@ -2823,18 +2826,18 @@
 	}
 
 	function applyPaletteRaw(palette) {
-		root.style.setProperty("--mr-hot", rgbCss(palette.hot));
-		root.style.setProperty("--mr-hot-rgb", rgbVar(palette.hot));
-		root.style.setProperty("--mr-cyan", rgbCss(palette.cyan));
-		root.style.setProperty("--mr-cyan-rgb", rgbVar(palette.cyan));
-		root.style.setProperty("--mr-lime", rgbCss(palette.lime));
-		root.style.setProperty("--mr-lime-rgb", rgbVar(palette.lime));
-		root.style.setProperty("--mr-bg-1", rgbCss(palette.bg1));
-		root.style.setProperty("--mr-bg-1-rgb", rgbVar(palette.bg1));
-		root.style.setProperty("--mr-bg-2", rgbCss(palette.bg2));
-		root.style.setProperty("--mr-bg-2-rgb", rgbVar(palette.bg2));
-		root.style.setProperty("--mr-bg-3", rgbCss(palette.bg3));
-		root.style.setProperty("--mr-bg-3-rgb", rgbVar(palette.bg3));
+		root.style.setProperty("--novaplayer-hot", rgbCss(palette.hot));
+		root.style.setProperty("--novaplayer-hot-rgb", rgbVar(palette.hot));
+		root.style.setProperty("--novaplayer-cyan", rgbCss(palette.cyan));
+		root.style.setProperty("--novaplayer-cyan-rgb", rgbVar(palette.cyan));
+		root.style.setProperty("--novaplayer-lime", rgbCss(palette.lime));
+		root.style.setProperty("--novaplayer-lime-rgb", rgbVar(palette.lime));
+		root.style.setProperty("--novaplayer-bg-1", rgbCss(palette.bg1));
+		root.style.setProperty("--novaplayer-bg-1-rgb", rgbVar(palette.bg1));
+		root.style.setProperty("--novaplayer-bg-2", rgbCss(palette.bg2));
+		root.style.setProperty("--novaplayer-bg-2-rgb", rgbVar(palette.bg2));
+		root.style.setProperty("--novaplayer-bg-3", rgbCss(palette.bg3));
+		root.style.setProperty("--novaplayer-bg-3-rgb", rgbVar(palette.bg3));
 	}
 
 	function updateCosmosTexture(palette) {
@@ -2861,13 +2864,13 @@
 		}
 
 		const cssImage = `url("${image}")`;
-		const previous = dom.cosmos.style.getPropertyValue("--mr-cosmos-current") || cssImage;
+		const previous = dom.cosmos.style.getPropertyValue("--novaplayer-cosmos-current") || cssImage;
 		state.cosmosSignature = signature;
 
 		if (!state.cosmosReady) {
-			setStyleProperty(dom.cosmos, "--mr-cosmos-current", cssImage);
-			setStyleProperty(dom.cosmos, "--mr-cosmos-current-opacity", "1");
-			setStyleProperty(dom.cosmos, "--mr-cosmos-prev-opacity", "0");
+			setStyleProperty(dom.cosmos, "--novaplayer-cosmos-current", cssImage);
+			setStyleProperty(dom.cosmos, "--novaplayer-cosmos-current-opacity", "1");
+			setStyleProperty(dom.cosmos, "--novaplayer-cosmos-prev-opacity", "0");
 			state.cosmosReady = true;
 			return;
 		}
@@ -2877,16 +2880,16 @@
 			state.cosmosSwapTimer = 0;
 		}
 
-		setStyleProperty(dom.cosmos, "--mr-cosmos-prev", previous);
-		setStyleProperty(dom.cosmos, "--mr-cosmos-current", cssImage);
-		setStyleProperty(dom.cosmos, "--mr-cosmos-prev-opacity", "1");
-		setStyleProperty(dom.cosmos, "--mr-cosmos-current-opacity", "0");
+		setStyleProperty(dom.cosmos, "--novaplayer-cosmos-prev", previous);
+		setStyleProperty(dom.cosmos, "--novaplayer-cosmos-current", cssImage);
+		setStyleProperty(dom.cosmos, "--novaplayer-cosmos-prev-opacity", "1");
+		setStyleProperty(dom.cosmos, "--novaplayer-cosmos-current-opacity", "0");
 		requestAnimationFrame(() => {
-			setStyleProperty(dom.cosmos, "--mr-cosmos-prev-opacity", "0");
-			setStyleProperty(dom.cosmos, "--mr-cosmos-current-opacity", "1");
+			setStyleProperty(dom.cosmos, "--novaplayer-cosmos-prev-opacity", "0");
+			setStyleProperty(dom.cosmos, "--novaplayer-cosmos-current-opacity", "1");
 		});
 		state.cosmosSwapTimer = setTimeout(() => {
-			setStyleProperty(dom.cosmos, "--mr-cosmos-prev", "none");
+			setStyleProperty(dom.cosmos, "--novaplayer-cosmos-prev", "none");
 			state.cosmosSwapTimer = 0;
 		}, PALETTE_TRANSITION_DURATION + 120);
 	}
@@ -4202,72 +4205,72 @@ body.novaplayer-open {
 }
 
 .novaplayer-launcher-active {
-	color: var(--mr-hot, #f0a33b) !important;
+	color: var(--novaplayer-hot, #f0a33b) !important;
 }
 
 #${ROOT_ID} {
-	--mr-tilt-x: 0deg;
-	--mr-tilt-y: 0deg;
-	--mr-scene-pan-x: 0px;
-		--mr-scene-pan-y: 0px;
-		--mr-cover-rot-z: -1.5deg;
-		--mr-lyrics-pan-x: 0px;
-		--mr-lyrics-pan-y: 0px;
-		--mr-lyrics-rot-z: 0deg;
-		--mr-camera-edge: 0;
-		--mr-edge-border: 10px;
-		--mr-edge-blur: 58px;
-		--mr-edge-opacity: 0.34;
-		--mr-player-anchor-y: -18px;
-		--mr-player-scale: 1;
-		--mr-flow-x: 50%;
-		--mr-flow-y: 50%;
-		--mr-flow-alt-x: 50%;
-		--mr-flow-alt-y: 50%;
-		--mr-flow-third-x: 50%;
-		--mr-flow-third-y: 50%;
-		--mr-flow-opacity: 0.28;
-		--mr-flow-scale: 1;
-		--mr-flow-saturation: 1.02;
-		--mr-flow-blur: 24px;
-		--mr-flow-shift-x: 0px;
-		--mr-flow-shift-y: 0px;
-		--mr-nebula-opacity: 0.34;
-		--mr-nebula-hot-alpha: 0.12;
-		--mr-nebula-cyan-alpha: 0.1;
-		--mr-nebula-lime-alpha: 0.06;
-		--mr-nebula-rotate: 0deg;
-		--mr-cosmos-current: none;
-		--mr-cosmos-prev: none;
-		--mr-cosmos-current-opacity: 1;
-		--mr-cosmos-prev-opacity: 0;
-		--mr-pointer-strength: 0;
-		--mr-cloud-brightness: 1;
-		--mr-cloud-saturation: 1.28;
-		--mr-star-opacity: 0.9;
-		--mr-cosmos-brightness: 0.92;
-		--mr-word-glow: 1;
-		--mr-layout-lyrics-x: 0px;
-		--mr-layout-lyrics-y: 0px;
-		--mr-layout-cloud-x: 0px;
-		--mr-layout-cloud-y: 0px;
-		--mr-layout-player-x: 0px;
-		--mr-layout-player-y: 0px;
-	--mr-hot: #f0a33b;
-	--mr-hot-rgb: 240, 163, 59;
-	--mr-cyan: #42c77b;
-	--mr-cyan-rgb: 66, 199, 123;
-	--mr-lime: #5d9ee0;
-	--mr-lime-rgb: 93, 158, 224;
-	--mr-bg-1: #05070a;
-	--mr-bg-1-rgb: 5, 7, 10;
-	--mr-bg-2: #151007;
-	--mr-bg-2-rgb: 21, 16, 7;
-	--mr-bg-3: #030907;
-	--mr-bg-3-rgb: 3, 9, 7;
-	--mr-ink: #05070a;
-	--mr-panel: rgba(18, 16, 12, 0.64);
-	--mr-line: rgba(255, 255, 255, 0.18);
+	--novaplayer-tilt-x: 0deg;
+	--novaplayer-tilt-y: 0deg;
+	--novaplayer-scene-pan-x: 0px;
+		--novaplayer-scene-pan-y: 0px;
+		--novaplayer-cover-rot-z: -1.5deg;
+		--novaplayer-lyrics-pan-x: 0px;
+		--novaplayer-lyrics-pan-y: 0px;
+		--novaplayer-lyrics-rot-z: 0deg;
+		--novaplayer-camera-edge: 0;
+		--novaplayer-edge-border: 10px;
+		--novaplayer-edge-blur: 58px;
+		--novaplayer-edge-opacity: 0.34;
+		--novaplayer-player-anchor-y: -18px;
+		--novaplayer-player-scale: 1;
+		--novaplayer-flow-x: 50%;
+		--novaplayer-flow-y: 50%;
+		--novaplayer-flow-alt-x: 50%;
+		--novaplayer-flow-alt-y: 50%;
+		--novaplayer-flow-third-x: 50%;
+		--novaplayer-flow-third-y: 50%;
+		--novaplayer-flow-opacity: 0.28;
+		--novaplayer-flow-scale: 1;
+		--novaplayer-flow-saturation: 1.02;
+		--novaplayer-flow-blur: 24px;
+		--novaplayer-flow-shift-x: 0px;
+		--novaplayer-flow-shift-y: 0px;
+		--novaplayer-nebula-opacity: 0.34;
+		--novaplayer-nebula-hot-alpha: 0.12;
+		--novaplayer-nebula-cyan-alpha: 0.1;
+		--novaplayer-nebula-lime-alpha: 0.06;
+		--novaplayer-nebula-rotate: 0deg;
+		--novaplayer-cosmos-current: none;
+		--novaplayer-cosmos-prev: none;
+		--novaplayer-cosmos-current-opacity: 1;
+		--novaplayer-cosmos-prev-opacity: 0;
+		--novaplayer-pointer-strength: 0;
+		--novaplayer-cloud-brightness: 1;
+		--novaplayer-cloud-saturation: 1.28;
+		--novaplayer-star-opacity: 0.9;
+		--novaplayer-cosmos-brightness: 0.92;
+		--novaplayer-word-glow: 1;
+		--novaplayer-layout-lyrics-x: 0px;
+		--novaplayer-layout-lyrics-y: 0px;
+		--novaplayer-layout-cloud-x: 0px;
+		--novaplayer-layout-cloud-y: 0px;
+		--novaplayer-layout-player-x: 0px;
+		--novaplayer-layout-player-y: 0px;
+	--novaplayer-hot: #f0a33b;
+	--novaplayer-hot-rgb: 240, 163, 59;
+	--novaplayer-cyan: #42c77b;
+	--novaplayer-cyan-rgb: 66, 199, 123;
+	--novaplayer-lime: #5d9ee0;
+	--novaplayer-lime-rgb: 93, 158, 224;
+	--novaplayer-bg-1: #05070a;
+	--novaplayer-bg-1-rgb: 5, 7, 10;
+	--novaplayer-bg-2: #151007;
+	--novaplayer-bg-2-rgb: 21, 16, 7;
+	--novaplayer-bg-3: #030907;
+	--novaplayer-bg-3-rgb: 3, 9, 7;
+	--novaplayer-ink: #05070a;
+	--novaplayer-panel: rgba(18, 16, 12, 0.64);
+	--novaplayer-line: rgba(255, 255, 255, 0.18);
 	position: fixed;
 	inset: 0;
 	width: 100vw;
@@ -4301,9 +4304,9 @@ body.novaplayer-open {
 	z-index: 8;
 	pointer-events: none;
 	box-shadow:
-		inset 0 0 0 var(--mr-edge-border) rgba(0,0,0,0.58),
-		inset 0 0 var(--mr-edge-blur) rgba(0,0,0,0.88);
-	opacity: var(--mr-edge-opacity);
+		inset 0 0 0 var(--novaplayer-edge-border) rgba(0,0,0,0.58),
+		inset 0 0 var(--novaplayer-edge-blur) rgba(0,0,0,0.88);
+	opacity: var(--novaplayer-edge-opacity);
 }
 
 #${ROOT_ID}::after {
@@ -4316,8 +4319,8 @@ body.novaplayer-open {
 	background:
 		radial-gradient(circle at 50% 50%, transparent 0 10%, rgba(255,255,255,0.18) 10.5%, transparent 11.4%),
 		repeating-radial-gradient(circle at 50% 50%, transparent 0 38px, rgba(255,255,255,0.055) 40px, transparent 44px),
-		radial-gradient(ellipse at 50% 50%, rgba(var(--mr-hot-rgb),0.22), transparent 32%),
-		radial-gradient(ellipse at 50% 50%, rgba(var(--mr-cyan-rgb),0.16), transparent 46%);
+		radial-gradient(ellipse at 50% 50%, rgba(var(--novaplayer-hot-rgb),0.22), transparent 32%),
+		radial-gradient(ellipse at 50% 50%, rgba(var(--novaplayer-cyan-rgb),0.16), transparent 46%);
 	mix-blend-mode: screen;
 	filter: blur(0.8px) saturate(1.12);
 	transform: scale(0.72);
@@ -4405,8 +4408,8 @@ body.novaplayer-open {
 #${ROOT_ID} .novaplayer__debug button:hover,
 #${ROOT_ID} .novaplayer__debug button:focus-visible,
 #${ROOT_ID} .novaplayer__debug button.is-active {
-	border-color: rgba(var(--mr-lime-rgb),0.54);
-	background: rgba(var(--mr-lime-rgb),0.14);
+	border-color: rgba(var(--novaplayer-lime-rgb),0.54);
+	background: rgba(var(--novaplayer-lime-rgb),0.14);
 	color: #fff;
 	outline: none;
 }
@@ -4528,7 +4531,7 @@ body.novaplayer-open {
 		radial-gradient(circle at 80% 70%, rgba(255,255,255,0.08) 0 1px, transparent 1px);
 	background-size: 9px 9px, 13px 13px;
 	opacity: 0.2;
-	animation: mr-grain 9s steps(10) infinite;
+	animation: novaplayer-grain 9s steps(10) infinite;
 }
 
 #${ROOT_ID} .novaplayer__playlist-hotzone {
@@ -4552,9 +4555,9 @@ body.novaplayer-open {
 	border: 1px solid rgba(255,255,255,0.18);
 	border-radius: 24px;
 	background:
-		radial-gradient(circle at 18% 12%, rgba(var(--mr-hot-rgb), 0.18), transparent 34%),
+		radial-gradient(circle at 18% 12%, rgba(var(--novaplayer-hot-rgb), 0.18), transparent 34%),
 		linear-gradient(145deg, rgba(255,255,255,0.15), rgba(255,255,255,0.044) 48%, rgba(255,255,255,0.085)),
-		rgba(var(--mr-bg-1-rgb), 0.52);
+		rgba(var(--novaplayer-bg-1-rgb), 0.52);
 	box-shadow:
 		0 30px 96px rgba(0,0,0,0.48),
 		inset 0 1px 0 rgba(255,255,255,0.28),
@@ -4562,8 +4565,8 @@ body.novaplayer-open {
 	backdrop-filter: blur(32px) saturate(1.65);
 	-webkit-backdrop-filter: blur(32px) saturate(1.65);
 	filter:
-		drop-shadow(1.4px 0 0 rgba(var(--mr-hot-rgb),0.16))
-		drop-shadow(-1.4px 0 0 rgba(var(--mr-cyan-rgb),0.13));
+		drop-shadow(1.4px 0 0 rgba(var(--novaplayer-hot-rgb),0.16))
+		drop-shadow(-1.4px 0 0 rgba(var(--novaplayer-cyan-rgb),0.13));
 	transform: translate(-112%, -50%) scale(.98);
 	transform-origin: left center;
 	opacity: 0;
@@ -4589,7 +4592,7 @@ body.novaplayer-open {
 }
 
 #${ROOT_ID} .novaplayer__playlists-count {
-	color: var(--mr-lime);
+	color: var(--novaplayer-lime);
 }
 
 #${ROOT_ID} .novaplayer__playlists-list {
@@ -4619,16 +4622,16 @@ body.novaplayer-open {
 	cursor: pointer;
 	transition: transform 180ms cubic-bezier(.16, 1, .3, 1), background 180ms ease, border-color 180ms ease, filter 180ms ease;
 	filter:
-		drop-shadow(1px 0 0 rgba(var(--mr-hot-rgb),0.12))
-		drop-shadow(-1px 0 0 rgba(var(--mr-cyan-rgb),0.1));
+		drop-shadow(1px 0 0 rgba(var(--novaplayer-hot-rgb),0.12))
+		drop-shadow(-1px 0 0 rgba(var(--novaplayer-cyan-rgb),0.1));
 }
 
 #${ROOT_ID} .novaplayer__playlist-item:hover,
 #${ROOT_ID} .novaplayer__playlist-item:focus-visible {
 	transform: translateX(6px);
-	border-color: rgba(var(--mr-hot-rgb), 0.42);
+	border-color: rgba(var(--novaplayer-hot-rgb), 0.42);
 	background:
-		radial-gradient(circle at 22% 18%, rgba(var(--mr-hot-rgb), 0.18), transparent 36%),
+		radial-gradient(circle at 22% 18%, rgba(var(--novaplayer-hot-rgb), 0.18), transparent 36%),
 		linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.045));
 	outline: none;
 }
@@ -4692,7 +4695,7 @@ body.novaplayer-open {
 
 #${ROOT_ID} .novaplayer__close:hover {
 	transform: scale(1.06);
-	background: rgba(var(--mr-hot-rgb), 0.18);
+	background: rgba(var(--novaplayer-hot-rgb), 0.18);
 	border-color: rgba(255,255,255,0.42);
 }
 
@@ -4716,7 +4719,7 @@ body.novaplayer-open {
 #${ROOT_ID} .novaplayer__settings-toggle:hover,
 #${ROOT_ID} .novaplayer__settings-toggle.is-active {
 	transform: scale(1.06);
-	background: rgba(var(--mr-cyan-rgb), 0.18);
+	background: rgba(var(--novaplayer-cyan-rgb), 0.18);
 	border-color: rgba(255,255,255,0.42);
 }
 
@@ -4835,14 +4838,14 @@ body.novaplayer-open {
 
 #${ROOT_ID} .novaplayer__setting-row input[type="range"] {
 	width: 132px;
-	accent-color: rgb(var(--mr-hot-rgb));
+	accent-color: rgb(var(--novaplayer-hot-rgb));
 }
 
 #${ROOT_ID} .novaplayer__setting-row--toggle input {
 	justify-self: end;
 	width: 18px;
 	height: 18px;
-	accent-color: rgb(var(--mr-hot-rgb));
+	accent-color: rgb(var(--novaplayer-hot-rgb));
 }
 
 #${ROOT_ID} .novaplayer__world {
@@ -4908,24 +4911,24 @@ body.novaplayer-open {
 	z-index: 0;
 	display: block;
 	overflow: hidden;
-	transform: scale(var(--mr-flow-scale));
+	transform: scale(var(--novaplayer-flow-scale));
 	transform-style: preserve-3d;
 	background:
-		radial-gradient(ellipse at var(--mr-flow-x) var(--mr-flow-y), rgba(var(--mr-hot-rgb), var(--mr-nebula-hot-alpha)) 0%, rgba(var(--mr-hot-rgb), calc(var(--mr-nebula-hot-alpha) * 0.42)) 28%, transparent 58%),
-		radial-gradient(ellipse at var(--mr-flow-alt-x) var(--mr-flow-alt-y), rgba(var(--mr-cyan-rgb), var(--mr-nebula-cyan-alpha)) 0%, rgba(var(--mr-cyan-rgb), calc(var(--mr-nebula-cyan-alpha) * 0.46)) 34%, transparent 64%),
-		radial-gradient(ellipse at var(--mr-flow-third-x) var(--mr-flow-third-y), rgba(var(--mr-lime-rgb), var(--mr-nebula-lime-alpha)) 0%, rgba(var(--mr-lime-rgb), calc(var(--mr-nebula-lime-alpha) * 0.42)) 36%, transparent 68%),
-		conic-gradient(from 34deg at var(--mr-flow-alt-x) var(--mr-flow-y), transparent 0 10%, rgba(255,255,255,0.06) 25%, rgba(var(--mr-cyan-rgb),0.075) 37%, transparent 62% 100%),
-		conic-gradient(from 214deg at var(--mr-flow-x) var(--mr-flow-alt-y), transparent 0 17%, rgba(var(--mr-hot-rgb),0.08) 36%, rgba(255,255,255,0.05) 46%, transparent 70% 100%),
+		radial-gradient(ellipse at var(--novaplayer-flow-x) var(--novaplayer-flow-y), rgba(var(--novaplayer-hot-rgb), var(--novaplayer-nebula-hot-alpha)) 0%, rgba(var(--novaplayer-hot-rgb), calc(var(--novaplayer-nebula-hot-alpha) * 0.42)) 28%, transparent 58%),
+		radial-gradient(ellipse at var(--novaplayer-flow-alt-x) var(--novaplayer-flow-alt-y), rgba(var(--novaplayer-cyan-rgb), var(--novaplayer-nebula-cyan-alpha)) 0%, rgba(var(--novaplayer-cyan-rgb), calc(var(--novaplayer-nebula-cyan-alpha) * 0.46)) 34%, transparent 64%),
+		radial-gradient(ellipse at var(--novaplayer-flow-third-x) var(--novaplayer-flow-third-y), rgba(var(--novaplayer-lime-rgb), var(--novaplayer-nebula-lime-alpha)) 0%, rgba(var(--novaplayer-lime-rgb), calc(var(--novaplayer-nebula-lime-alpha) * 0.42)) 36%, transparent 68%),
+		conic-gradient(from 34deg at var(--novaplayer-flow-alt-x) var(--novaplayer-flow-y), transparent 0 10%, rgba(255,255,255,0.06) 25%, rgba(var(--novaplayer-cyan-rgb),0.075) 37%, transparent 62% 100%),
+		conic-gradient(from 214deg at var(--novaplayer-flow-x) var(--novaplayer-flow-alt-y), transparent 0 17%, rgba(var(--novaplayer-hot-rgb),0.08) 36%, rgba(255,255,255,0.05) 46%, transparent 70% 100%),
 		radial-gradient(ellipse at 50% 50%, rgba(255,255,255,0.025), transparent 24%),
 		radial-gradient(ellipse at 50% 54%, rgba(0,0,0,0.02), rgba(0,0,0,0.72) 82%),
-		linear-gradient(135deg, rgba(var(--mr-bg-2-rgb),0.92), rgba(var(--mr-bg-3-rgb),0.82) 45%, rgba(var(--mr-bg-1-rgb),0.98));
+		linear-gradient(135deg, rgba(var(--novaplayer-bg-2-rgb),0.92), rgba(var(--novaplayer-bg-3-rgb),0.82) 45%, rgba(var(--novaplayer-bg-1-rgb),0.98));
 	background-blend-mode: screen, screen, screen, screen, screen, screen, multiply, normal;
-	opacity: var(--mr-flow-opacity);
+	opacity: var(--novaplayer-flow-opacity);
 	mask-image: none;
 	-webkit-mask-image: none;
 	animation: none;
 	contain: paint style;
-	filter: saturate(var(--mr-flow-saturation)) brightness(var(--mr-cosmos-brightness));
+	filter: saturate(var(--novaplayer-flow-saturation)) brightness(var(--novaplayer-cosmos-brightness));
 	transition: none;
 }
 
@@ -4945,9 +4948,9 @@ body.novaplayer-open {
 }
 
 #${ROOT_ID} .novaplayer__cosmos::before {
-	background-image: var(--mr-cosmos-prev);
-	opacity: calc(var(--mr-cosmos-prev-opacity) * var(--mr-star-opacity));
-	transform: translate(var(--mr-flow-shift-x), var(--mr-flow-shift-y)) rotateZ(-0.4deg) scale(1.055);
+	background-image: var(--novaplayer-cosmos-prev);
+	opacity: calc(var(--novaplayer-cosmos-prev-opacity) * var(--novaplayer-star-opacity));
+	transform: translate(var(--novaplayer-flow-shift-x), var(--novaplayer-flow-shift-y)) rotateZ(-0.4deg) scale(1.055);
 	mix-blend-mode: normal;
 	mask-image: none;
 	-webkit-mask-image: none;
@@ -4955,9 +4958,9 @@ body.novaplayer-open {
 }
 
 #${ROOT_ID} .novaplayer__cosmos::after {
-	background-image: var(--mr-cosmos-current);
-	opacity: calc(var(--mr-cosmos-current-opacity) * var(--mr-star-opacity));
-	transform: translate(var(--mr-flow-shift-x), var(--mr-flow-shift-y)) rotateZ(0.55deg) scale(1.05);
+	background-image: var(--novaplayer-cosmos-current);
+	opacity: calc(var(--novaplayer-cosmos-current-opacity) * var(--novaplayer-star-opacity));
+	transform: translate(var(--novaplayer-flow-shift-x), var(--novaplayer-flow-shift-y)) rotateZ(0.55deg) scale(1.05);
 	mix-blend-mode: normal;
 	mask-image: none;
 	-webkit-mask-image: none;
@@ -4980,7 +4983,7 @@ body.novaplayer-open {
 	filter: blur(34px) saturate(1.35) brightness(0.68);
 	opacity: 0.48;
 	mix-blend-mode: screen;
-	animation: mr-aura 9s ease-in-out infinite alternate;
+	animation: novaplayer-aura 9s ease-in-out infinite alternate;
 }
 
 #${ROOT_ID} .novaplayer__cover-echo {
@@ -4992,18 +4995,18 @@ body.novaplayer-open {
 	width: min(68vmin, 760px);
 	height: min(68vmin, 760px);
 	border-radius: clamp(18px, 2.4vmin, 30px);
-	background-image: var(--mr-cover);
+	background-image: var(--novaplayer-cover);
 	background-size: cover;
 	background-position: center;
 	box-shadow:
 		0 34px 120px rgba(0,0,0,0.42),
 		0 0 0 1px rgba(255,255,255,0.08),
-		0 0 72px rgba(var(--mr-hot-rgb), 0.12);
+		0 0 72px rgba(var(--novaplayer-hot-rgb), 0.12);
 	filter: saturate(1.04) contrast(1.02) brightness(0.82);
 	opacity: 0.54;
 	transform:
-		translate(calc(-50% + var(--mr-scene-pan-x) + var(--mr-layout-cloud-x)), calc(-50% + var(--mr-scene-pan-y) + var(--mr-layout-cloud-y)))
-		rotate(var(--mr-cover-rot-z))
+		translate(calc(-50% + var(--novaplayer-scene-pan-x) + var(--novaplayer-layout-cloud-x)), calc(-50% + var(--novaplayer-scene-pan-y) + var(--novaplayer-layout-cloud-y)))
+		rotate(var(--novaplayer-cover-rot-z))
 		scale(0.985);
 	overflow: hidden;
 	will-change: transform, opacity;
@@ -5019,15 +5022,15 @@ body.novaplayer-open {
 	display: block;
 	opacity: 0.98;
 	transform:
-		translate(calc(-50% + var(--mr-scene-pan-x) + var(--mr-layout-cloud-x)), calc(-50% + var(--mr-scene-pan-y) + var(--mr-layout-cloud-y)))
-		rotate(var(--mr-cover-rot-z))
+		translate(calc(-50% + var(--novaplayer-scene-pan-x) + var(--novaplayer-layout-cloud-x)), calc(-50% + var(--novaplayer-scene-pan-y) + var(--novaplayer-layout-cloud-y)))
+		rotate(var(--novaplayer-cover-rot-z))
 		scale(1);
-	filter: saturate(var(--mr-cloud-saturation)) contrast(1.06) brightness(var(--mr-cloud-brightness));
+	filter: saturate(var(--novaplayer-cloud-saturation)) contrast(1.06) brightness(var(--novaplayer-cloud-brightness));
 	will-change: transform, opacity, filter;
 }
 
 #${ROOT_ID} .novaplayer__cloud.is-fallback {
-	background-image: var(--mr-cover);
+	background-image: var(--novaplayer-cover);
 	background-size: cover;
 	background-position: center;
 	opacity: .28;
@@ -5052,11 +5055,11 @@ body.novaplayer-open {
 	padding: 0 clamp(8px, 1.6vw, 22px);
 	text-align: center;
 	text-shadow:
-		0 0 18px rgba(var(--mr-hot-rgb), 0.42),
+		0 0 18px rgba(var(--novaplayer-hot-rgb), 0.42),
 		0 12px 58px rgba(0,0,0,0.78);
 	transform:
-		translate(calc(-50% + var(--mr-lyrics-pan-x) + var(--mr-layout-lyrics-x)), calc(-50% + var(--mr-lyrics-pan-y) + var(--mr-layout-lyrics-y)))
-		rotate(var(--mr-lyrics-rot-z));
+		translate(calc(-50% + var(--novaplayer-lyrics-pan-x) + var(--novaplayer-layout-lyrics-x)), calc(-50% + var(--novaplayer-lyrics-pan-y) + var(--novaplayer-layout-lyrics-y)))
+		rotate(var(--novaplayer-lyrics-rot-z));
 	transform-style: flat;
 	transform-origin: center center;
 	backface-visibility: hidden;
@@ -5073,7 +5076,7 @@ body.novaplayer-open {
 }
 
 #${ROOT_ID}.novaplayer-debug-no-world3d .novaplayer__lyrics {
-	transform: translate(calc(-50% + var(--mr-layout-lyrics-x)), calc(-50% + var(--mr-layout-lyrics-y)));
+	transform: translate(calc(-50% + var(--novaplayer-layout-lyrics-x)), calc(-50% + var(--novaplayer-layout-lyrics-y)));
 }
 
 #${ROOT_ID} .novaplayer__lyrics::before {
@@ -5104,8 +5107,8 @@ body.novaplayer-open {
 	color: rgba(255,255,255,0.72);
 	box-shadow: inset 0 1px 0 rgba(255,255,255,0.22);
 	filter:
-		drop-shadow(1.1px 0 0 rgba(var(--mr-hot-rgb),0.24))
-		drop-shadow(-1.1px 0 0 rgba(var(--mr-cyan-rgb),0.18));
+		drop-shadow(1.1px 0 0 rgba(var(--novaplayer-hot-rgb),0.24))
+		drop-shadow(-1.1px 0 0 rgba(var(--novaplayer-cyan-rgb),0.18));
 }
 
 #${ROOT_ID} .novaplayer__lyric-current {
@@ -5128,13 +5131,13 @@ body.novaplayer-open {
 
 #${ROOT_ID} .novaplayer__lyric-word {
 	display: inline-block;
-	--mr-word-progress: 0%;
+	--novaplayer-word-progress: 0%;
 	color: rgba(255,255,255,0.42);
 	background-image:
 		linear-gradient(90deg,
-			rgba(var(--mr-hot-rgb), 0.98) 0%,
-			rgba(255,255,255,0.98) var(--mr-word-progress),
-			rgba(255,255,255,0.38) calc(var(--mr-word-progress) + 16%),
+			rgba(var(--novaplayer-hot-rgb), 0.98) 0%,
+			rgba(255,255,255,0.98) var(--novaplayer-word-progress),
+			rgba(255,255,255,0.38) calc(var(--novaplayer-word-progress) + 16%),
 			rgba(255,255,255,0.34) 100%);
 	background-clip: text;
 	-webkit-background-clip: text;
@@ -5142,7 +5145,7 @@ body.novaplayer-open {
 	transform: translateY(0) scale(1);
 	filter: blur(0);
 	text-shadow:
-		0 0 calc(4px + 10px * var(--mr-word-glow)) rgba(255,255,255, calc(0.04 * var(--mr-word-glow))),
+		0 0 calc(4px + 10px * var(--novaplayer-word-glow)) rgba(255,255,255, calc(0.04 * var(--novaplayer-word-glow))),
 		0 12px 48px rgba(0,0,0,0.76);
 	transition:
 		opacity 180ms ease,
@@ -5159,7 +5162,7 @@ body.novaplayer-open {
 			rgba(255,255,255,0.96) 0%,
 			rgba(255,255,255,0.86) 100%);
 	text-shadow:
-		0 0 calc(5px + 8px * var(--mr-word-glow)) rgba(255,255,255, calc(0.1 * var(--mr-word-glow))),
+		0 0 calc(5px + 8px * var(--novaplayer-word-glow)) rgba(255,255,255, calc(0.1 * var(--novaplayer-word-glow))),
 		0 12px 46px rgba(0,0,0,0.72);
 }
 
@@ -5168,21 +5171,21 @@ body.novaplayer-open {
 	transform: translateY(-0.045em) scale(1.055);
 	filter: saturate(1.28);
 	text-shadow:
-		0 0 calc(8px + 12px * var(--mr-word-glow)) rgba(var(--mr-hot-rgb), calc(0.4 * var(--mr-word-glow))),
-		0 0 calc(20px + 18px * var(--mr-word-glow)) rgba(var(--mr-hot-rgb), calc(0.24 * var(--mr-word-glow))),
+		0 0 calc(8px + 12px * var(--novaplayer-word-glow)) rgba(var(--novaplayer-hot-rgb), calc(0.4 * var(--novaplayer-word-glow))),
+		0 0 calc(20px + 18px * var(--novaplayer-word-glow)) rgba(var(--novaplayer-hot-rgb), calc(0.24 * var(--novaplayer-word-glow))),
 		0 14px 56px rgba(0,0,0,0.72);
 }
 
 #${ROOT_ID} .novaplayer__lyrics[data-role="back"] .novaplayer__lyric-word.is-current,
 #${ROOT_ID} .novaplayer__lyrics[data-role="back"] .novaplayer__vocal-role {
-	color: var(--mr-cyan);
-	text-shadow: 0 0 18px rgba(var(--mr-cyan-rgb),0.55);
+	color: var(--novaplayer-cyan);
+	text-shadow: 0 0 18px rgba(var(--novaplayer-cyan-rgb),0.55);
 }
 
 #${ROOT_ID} .novaplayer__lyrics[data-role="response"] .novaplayer__lyric-word.is-current,
 #${ROOT_ID} .novaplayer__lyrics[data-role="response"] .novaplayer__vocal-role {
-	color: var(--mr-lime);
-	text-shadow: 0 0 18px rgba(var(--mr-lime-rgb),0.5);
+	color: var(--novaplayer-lime);
+	text-shadow: 0 0 18px rgba(var(--novaplayer-lime-rgb),0.5);
 }
 
 #${ROOT_ID} .novaplayer__lyric-prev,
@@ -5203,7 +5206,7 @@ body.novaplayer-open {
 }
 
 #${ROOT_ID} .novaplayer__lyric-next {
-	color: rgba(var(--mr-cyan-rgb), 0.42);
+	color: rgba(var(--novaplayer-cyan-rgb), 0.42);
 }
 
 #${ROOT_ID} .novaplayer__lyric-meta {
@@ -5233,7 +5236,7 @@ body.novaplayer-open {
 	text-transform: uppercase;
 	color: rgba(255,255,255,0.84);
 	text-shadow: 0 10px 32px rgba(0,0,0,0.72);
-	transform: translate(-50%, -50%);
+	transform: translate(calc(-50% + var(--novaplayer-layout-lyrics-x)), calc(-50% + var(--novaplayer-layout-lyrics-y)));
 	pointer-events: none;
 }
 
@@ -5249,8 +5252,8 @@ body.novaplayer-open {
 #${ROOT_ID} .novaplayer__meta-divider {
 	flex: 0 0 36px;
 	height: 2px;
-	background: linear-gradient(90deg, var(--mr-hot), var(--mr-cyan));
-	box-shadow: 0 0 18px rgba(var(--mr-hot-rgb),.45);
+	background: linear-gradient(90deg, var(--novaplayer-hot), var(--novaplayer-cyan));
+	box-shadow: 0 0 18px rgba(var(--novaplayer-hot-rgb),.45);
 }
 
 #${ROOT_ID} .novaplayer__backs {
@@ -5265,8 +5268,8 @@ body.novaplayer-open {
 
 #${ROOT_ID} .novaplayer__back-vocal {
 	position: absolute;
-	left: var(--mr-back-x);
-	top: var(--mr-back-y);
+	left: var(--novaplayer-back-x);
+	top: var(--novaplayer-back-y);
 	max-width: min(34vw, 520px);
 	padding: 0;
 	border: 0;
@@ -5280,20 +5283,20 @@ body.novaplayer-open {
 	mix-blend-mode: screen;
 	text-shadow:
 		0 0 13px rgba(255,255,255,0.32),
-		1.2px 0 0 rgba(var(--mr-hot-rgb),0.34),
-		-1.2px 0 0 rgba(var(--mr-cyan-rgb),0.3),
+		1.2px 0 0 rgba(var(--novaplayer-hot-rgb),0.34),
+		-1.2px 0 0 rgba(var(--novaplayer-cyan-rgb),0.3),
 		0 18px 44px rgba(0,0,0,0.82);
 	transform:
 		translate(-50%, -50%)
-		rotate(var(--mr-back-tilt-z))
+		rotate(var(--novaplayer-back-tilt-z))
 		scale(.92);
 	opacity: 0;
-	animation: mr-back-vocal 4200ms cubic-bezier(.16, 1, .3, 1) forwards;
+	animation: novaplayer-back-vocal 4200ms cubic-bezier(.16, 1, .3, 1) forwards;
 	will-change: transform, opacity, filter;
 }
 
 #${ROOT_ID} .novaplayer__lyrics.is-line-changing .novaplayer__lyric-current {
-	animation: mr-line-pop 620ms cubic-bezier(.16, 1, .26, 1) both;
+	animation: novaplayer-line-pop 620ms cubic-bezier(.16, 1, .26, 1) both;
 }
 
 #${ROOT_ID}.is-track-changing .novaplayer__lyrics {
@@ -5354,12 +5357,12 @@ body.novaplayer-open {
 	color: rgba(255,255,255,0.82);
 	transform: none;
 	filter:
-		drop-shadow(1.2px 0 0 rgba(var(--mr-hot-rgb),0.2))
-		drop-shadow(-1.2px 0 0 rgba(var(--mr-cyan-rgb),0.16));
+		drop-shadow(1.2px 0 0 rgba(var(--novaplayer-hot-rgb),0.2))
+		drop-shadow(-1.2px 0 0 rgba(var(--novaplayer-cyan-rgb),0.16));
 }
 
 #${ROOT_ID} .novaplayer__queue-count {
-	color: var(--mr-lime);
+	color: var(--novaplayer-lime);
 }
 
 #${ROOT_ID} .novaplayer__queue-list {
@@ -5432,10 +5435,10 @@ body.novaplayer-open {
 	transform-style: flat;
 	transition: transform 260ms cubic-bezier(.16, 1, .3, 1), background 220ms ease, border-color 220ms ease, box-shadow 220ms ease, opacity 220ms ease;
 	overflow: hidden;
-	opacity: var(--mr-depth-opacity);
+	opacity: var(--novaplayer-depth-opacity);
 	filter:
-		drop-shadow(1.2px 0 0 rgba(var(--mr-hot-rgb),0.16))
-		drop-shadow(-1.2px 0 0 rgba(var(--mr-cyan-rgb),0.12));
+		drop-shadow(1.2px 0 0 rgba(var(--novaplayer-hot-rgb),0.16))
+		drop-shadow(-1.2px 0 0 rgba(var(--novaplayer-cyan-rgb),0.12));
 	backface-visibility: visible;
 	will-change: auto;
 }
@@ -5564,7 +5567,7 @@ body.novaplayer-open {
 #${ROOT_ID} .novaplayer__queue-index {
 	font-size: 10px;
 	font-weight: 900;
-	color: rgba(var(--mr-cyan-rgb),0.62);
+	color: rgba(var(--novaplayer-cyan-rgb),0.62);
 	text-align: right;
 	transform: none;
 }
@@ -5600,20 +5603,20 @@ body.novaplayer-open {
 	background:
 		linear-gradient(145deg, rgba(255,255,255,0.15), rgba(255,255,255,0.045) 42%, rgba(255,255,255,0.095)),
 		radial-gradient(circle at 18% 10%, rgba(255,255,255,0.18), transparent 28%),
-		radial-gradient(circle at 75% 95%, rgba(var(--mr-cyan-rgb),0.12), transparent 36%),
-		rgba(var(--mr-bg-2-rgb), 0.36);
+		radial-gradient(circle at 75% 95%, rgba(var(--novaplayer-cyan-rgb),0.12), transparent 36%),
+		rgba(var(--novaplayer-bg-2-rgb), 0.36);
 	box-shadow:
 		0 22px 86px rgba(0,0,0,0.36),
 		inset 0 1px 0 rgba(255,255,255,0.34),
 		inset 0 -1px 0 rgba(255,255,255,0.06);
 	backdrop-filter: blur(22px) saturate(1.45);
 	-webkit-backdrop-filter: blur(22px) saturate(1.45);
-	transform: translateX(calc(-50% + var(--mr-layout-player-x))) translateY(calc(var(--mr-player-anchor-y) + var(--mr-layout-player-y))) scale(var(--mr-player-scale));
+	transform: translateX(calc(-50% + var(--novaplayer-layout-player-x))) translateY(calc(var(--novaplayer-player-anchor-y) + var(--novaplayer-layout-player-y))) scale(var(--novaplayer-player-scale));
 	overflow: hidden;
 	will-change: transform;
 	filter:
-		drop-shadow(1.4px 0 0 rgba(var(--mr-hot-rgb),0.18))
-		drop-shadow(-1.4px 0 0 rgba(var(--mr-cyan-rgb),0.14));
+		drop-shadow(1.4px 0 0 rgba(var(--novaplayer-hot-rgb),0.18))
+		drop-shadow(-1.4px 0 0 rgba(var(--novaplayer-cyan-rgb),0.14));
 }
 
 #${ROOT_ID} .novaplayer__player::before {
@@ -5622,7 +5625,7 @@ body.novaplayer-open {
 	inset: 0;
 	border-radius: inherit;
 	padding: 1px;
-	background: linear-gradient(125deg, rgba(255,255,255,.58), transparent 28%, rgba(var(--mr-hot-rgb),.14) 55%, rgba(var(--mr-cyan-rgb),.28) 82%, rgba(255,255,255,.28));
+	background: linear-gradient(125deg, rgba(255,255,255,.58), transparent 28%, rgba(var(--novaplayer-hot-rgb),.14) 55%, rgba(var(--novaplayer-cyan-rgb),.28) 82%, rgba(255,255,255,.28));
 	-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
 	-webkit-mask-composite: xor;
 	mask-composite: exclude;
@@ -5715,8 +5718,8 @@ body.novaplayer-open {
 }
 
 #${ROOT_ID} .novaplayer__icon-button.is-active {
-	color: var(--mr-hot);
-	text-shadow: 0 0 12px rgba(var(--mr-hot-rgb),0.72);
+	color: var(--novaplayer-hot);
+	text-shadow: 0 0 12px rgba(var(--novaplayer-hot-rgb),0.72);
 }
 
 #${ROOT_ID} .novaplayer__play {
@@ -5727,15 +5730,15 @@ body.novaplayer-open {
 	background:
 		linear-gradient(145deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08)),
 		rgba(255,255,255,0.08);
-	box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 0 30px rgba(var(--mr-hot-rgb),0.18);
+	box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), 0 0 30px rgba(var(--novaplayer-hot-rgb),0.18);
 }
 
 #${ROOT_ID} .novaplayer__play:hover,
 #${ROOT_ID} .novaplayer__play.is-playing {
 	background:
-		linear-gradient(145deg, rgba(255,255,255,0.28), rgba(var(--mr-hot-rgb),0.13)),
+		linear-gradient(145deg, rgba(255,255,255,0.28), rgba(var(--novaplayer-hot-rgb),0.13)),
 		rgba(255,255,255,0.12);
-	box-shadow: inset 0 1px 0 rgba(255,255,255,0.26), 0 0 36px rgba(var(--mr-hot-rgb),0.28);
+	box-shadow: inset 0 1px 0 rgba(255,255,255,0.26), 0 0 36px rgba(var(--novaplayer-hot-rgb),0.28);
 }
 
 #${ROOT_ID} .novaplayer__timeline {
@@ -5788,8 +5791,8 @@ body.novaplayer-open {
 	height: 100%;
 	width: 0%;
 	border-radius: inherit;
-	background: linear-gradient(90deg, var(--mr-hot), rgba(255,255,255,0.92) 54%, var(--mr-cyan));
-	box-shadow: 0 0 16px rgba(var(--mr-hot-rgb),0.42), 0 0 20px rgba(var(--mr-cyan-rgb),0.22);
+	background: linear-gradient(90deg, var(--novaplayer-hot), rgba(255,255,255,0.92) 54%, var(--novaplayer-cyan));
+	box-shadow: 0 0 16px rgba(var(--novaplayer-hot-rgb),0.42), 0 0 20px rgba(var(--novaplayer-cyan-rgb),0.22);
 }
 
 #${ROOT_ID} .novaplayer__progress-thumb {
@@ -5808,34 +5811,34 @@ body.novaplayer-open {
 	animation: none;
 }
 
-@keyframes mr-grain {
+@keyframes novaplayer-grain {
 	0% { transform: translate(0, 0); }
 	100% { transform: translate(-4%, 3%); }
 }
 
-@keyframes mr-aura {
+@keyframes novaplayer-aura {
 	0% { transform: translate(-50%, -50%) rotate(-1deg) scale(0.985); opacity: 0.32; }
 	100% { transform: translate(-50%, -50%) rotate(1deg) scale(1.025); opacity: 0.44; }
 }
 
-@keyframes mr-lidar-sweep {
+@keyframes novaplayer-lidar-sweep {
 	0% { transform: translateX(-74%); opacity: 0; }
 	12% { opacity: 0.62; }
 	58% { opacity: 0.42; }
 	100% { transform: translateX(74%); opacity: 0; }
 }
 
-@keyframes mr-line-pop {
+@keyframes novaplayer-line-pop {
 	0% { opacity: 1; transform: translate(0, 14px) scale(.992); filter: blur(1px); }
 	100% { opacity: 1; transform: translate(0, 0) scale(1); filter: blur(0); }
 }
 
-@keyframes mr-back-vocal {
+@keyframes novaplayer-back-vocal {
 	0% {
 		opacity: 0;
 		transform:
 			translate(-50%, -50%)
-			rotate(var(--mr-back-tilt-z))
+			rotate(var(--novaplayer-back-tilt-z))
 			scale(.88);
 		filter: blur(10px);
 	}
@@ -5850,29 +5853,29 @@ body.novaplayer-open {
 		opacity: 0;
 		transform:
 			translate(-50%, -58%)
-			translate(var(--mr-back-drift-x), var(--mr-back-drift-y))
-			rotate(var(--mr-back-tilt-z))
+			translate(var(--novaplayer-back-drift-x), var(--novaplayer-back-drift-y))
+			rotate(var(--novaplayer-back-tilt-z))
 			scale(1.06);
 		filter: blur(12px);
 	}
 }
 
-@keyframes mr-lyrics-track {
+@keyframes novaplayer-lyrics-track {
 	0% { opacity: 1; transform: translate(-8px, 4px) scale(.996); filter: blur(1px); }
 	100% { opacity: 1; transform: translate(0, 0) scale(1); filter: blur(0); }
 }
 
-@keyframes mr-queue-track {
+@keyframes novaplayer-queue-track {
 	0% { opacity: 1; filter: blur(1px); }
 	100% { opacity: 1; filter: blur(0); }
 }
 
-@keyframes mr-player-track {
+@keyframes novaplayer-player-track {
 	0% { opacity: 1; filter: blur(1px); }
 	100% { opacity: 1; filter: blur(0); }
 }
 
-@keyframes mr-nebula-drift {
+@keyframes novaplayer-nebula-drift {
 	0% {
 		transform: translate(0, 0) rotateZ(-4deg) scale(1.02);
 		filter: blur(30px) saturate(1.12);
@@ -5885,12 +5888,12 @@ body.novaplayer-open {
 	}
 }
 
-@keyframes mr-star-drift {
+@keyframes novaplayer-star-drift {
 	0% { background-position: 0 0, 0 0, 0 0, 0 0, 0 0; }
 	100% { background-position: 110px -82px, -90px 140px, 160px 120px, -220px -160px, 260px -120px; }
 }
 
-@keyframes mr-stars-warp {
+@keyframes novaplayer-stars-warp {
 	0% {
 		transform: translate(0, 0) rotateZ(12deg) scale(1.18);
 		filter: blur(0);
@@ -5908,7 +5911,7 @@ body.novaplayer-open {
 	}
 }
 
-@keyframes mr-nebula-warp {
+@keyframes novaplayer-nebula-warp {
 	0% {
 		transform: translate(0, 0) rotateZ(-18deg) scale(1.18);
 		filter: blur(32px) saturate(1.08);
@@ -5926,7 +5929,7 @@ body.novaplayer-open {
 	}
 }
 
-@keyframes mr-universe-jump {
+@keyframes novaplayer-universe-jump {
 	0% {
 		opacity: 0;
 		transform: scale(0.62);
@@ -5960,7 +5963,7 @@ body.novaplayer-open {
 		left: 50%;
 		top: 45%;
 		width: min(92vw, 940px);
-		transform: translate(calc(-50% + var(--mr-layout-lyrics-x)), calc(-50% + var(--mr-layout-lyrics-y))) rotate(var(--mr-lyrics-rot-z));
+		transform: translate(calc(-50% + var(--novaplayer-layout-lyrics-x)), calc(-50% + var(--novaplayer-layout-lyrics-y))) rotate(var(--novaplayer-lyrics-rot-z));
 	}
 
 	#${ROOT_ID} .novaplayer__lyric-meta {
@@ -6045,7 +6048,7 @@ body.novaplayer-open {
 		left: 50%;
 		top: 45%;
 		width: 96vw;
-		transform: translate(calc(-50% + var(--mr-layout-lyrics-x)), calc(-50% + var(--mr-layout-lyrics-y)));
+		transform: translate(calc(-50% + var(--novaplayer-layout-lyrics-x)), calc(-50% + var(--novaplayer-layout-lyrics-y)));
 	}
 
 	#${ROOT_ID} .novaplayer__lyric-meta {
