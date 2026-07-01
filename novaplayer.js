@@ -3142,6 +3142,11 @@ uniform float u_depth_scale;
 uniform float u_point_scale;
 uniform vec3 u_accent;
 uniform vec3 u_secondary;
+uniform vec3 u_accent_from;
+uniform vec3 u_secondary_from;
+uniform vec3 u_accent_to;
+uniform vec3 u_secondary_to;
+uniform float u_palette_t;
 varying vec4 v_color;
 
 float easeOutCubic(float value) {
@@ -3190,29 +3195,18 @@ void main() {
 	float shapeWeight = smootherStep(clamp(u_ring_hold, 0.0, 1.0));
 	float shapeMix = 1.0 - pow(1.0 - shapeWeight, 3.0);
 
-	float side = step(0.5, hash1(a_seed + 1.7));
-	float polarity = side * 2.0 - 1.0;
-	float beadCount = 7.0;
-	float beadRaw = hash1(a_seed + 5.9) * (beadCount - 0.0001);
-	float bead = floor(beadRaw);
-	float path = bead / (beadCount - 1.0);
-	float beadAngle = hash1(a_seed + 3.1) * 6.28318530718;
-	float beadFill = sqrt(hash1(a_seed + 7.4));
-	float headWeight = mix(path, 1.0 - path, side);
-	float radius = 0.044 + pow(headWeight, 1.28) * 0.17;
-	float arc = sin(path * 3.14159265359);
-	vec2 beadCenter = vec2(
-		mix(-0.4, 0.4, path) + polarity * arc * 0.035,
-		polarity * (0.25 + arc * 0.095)
-	);
-	vec2 beadLocal = vec2(cos(beadAngle), sin(beadAngle)) * beadFill * radius;
-	vec2 drop = beadCenter + beadLocal;
-
-	vec2 yinYang = rotate2d(u_time * 0.00058 - 0.36) * drop;
+	float ringAngle = hash1(a_seed + 3.1) * 6.28318530718;
+	float ringFill = hash1(a_seed + 7.4);
+	float innerRadius = 0.32;
+	float outerRadius = 0.56;
+	float ringRadius = sqrt(mix(innerRadius * innerRadius, outerRadius * outerRadius, ringFill));
+	float ringJitter = (hash1(a_seed + 9.2) - 0.5) * 0.012;
+	vec2 loaderRing = vec2(cos(ringAngle), sin(ringAngle)) * (ringRadius + ringJitter);
+	vec2 spinner = rotate2d(u_time * 0.00105 - 0.78) * loaderRing;
 	vec3 shape = vec3(
-		yinYang.x * 1.08,
-		yinYang.y * 1.02,
-		(path - 0.5) * polarity * 0.18 + sin(beadAngle) * radius * 0.24
+		spinner.x * 1.03,
+		spinner.y,
+		(ringRadius - 0.44) * 0.5 + sin(ringAngle * 2.0 + u_time * 0.0011) * 0.018
 	);
 
 	vec3 pos = mix(a_source, a_target, coverEase);
@@ -3239,8 +3233,23 @@ void main() {
 	float luma = dot(lifted, vec3(0.299, 0.587, 0.114));
 	vec3 saturated = mix(vec3(luma), lifted, 1.34);
 	vec3 readable = clamp(saturated * 1.08 + vec3(0.012), 0.0, 1.0);
-	vec3 rgb = mix(readable, accent, clamp(shapeMix * 0.3 + pulse * 0.06, 0.0, 0.36));
-	float alpha = clamp(a_color.a * (1.0 + shapeMix * 0.08), 0.62, 0.96);
+	float loaderPhase = fract(ringAngle / 6.28318530718 + 0.1);
+	float loaderRamp = smoothstep(0.07, 0.92, loaderPhase);
+	float loaderSeam = 1.0 - smoothstep(0.94, 1.0, loaderPhase) * 0.72;
+	float loaderHead = smoothstep(0.0, 0.035, loaderPhase) * (1.0 - smoothstep(0.18, 0.26, loaderPhase));
+	float loaderTint = smoothstep(0.16, 0.88, loaderPhase);
+	float loaderDensity = clamp(0.1 + loaderRamp * 0.9, 0.1, 1.0) * loaderSeam;
+	loaderDensity = max(loaderDensity, loaderHead * 0.98);
+	float densityLimit = mix(1.0, loaderDensity, shapeMix);
+	float densityMask = step(hash1(a_seed + 29.3), densityLimit);
+	vec3 loaderFrom = mix(u_accent_from, u_secondary_from, loaderTint);
+	vec3 loaderTo = mix(u_accent_to, u_secondary_to, loaderTint);
+	vec3 loaderPalette = mix(loaderFrom, loaderTo, smootherStep(u_palette_t));
+	float loaderLight = 0.66 + loaderRamp * 0.34 + loaderHead * 0.18;
+	vec3 loaderRgb = clamp(loaderPalette * loaderLight + vec3(loaderHead * 0.035), 0.0, 1.0);
+	vec3 baseRgb = mix(readable, accent, pulse * 0.02);
+	vec3 rgb = mix(baseRgb, loaderRgb, clamp(shapeMix * 0.92 + pulse * 0.04, 0.0, 0.96));
+	float alpha = mix(clamp(a_color.a, 0.62, 0.96), 0.94, shapeMix * 0.88) * densityMask;
 	if (u_chroma > 0.1) {
 		rgb = vec3(rgb.r * 0.82, rgb.g * 0.08, rgb.b * 0.08);
 		alpha *= 0.12;
@@ -3249,7 +3258,7 @@ void main() {
 		alpha *= 0.11;
 	}
 
-	float size = (3.25 + a_brightness * 2.35 + shapeMix * 0.72 + pulse * 0.22) * u_dpr * perspective * u_point_scale;
+	float size = (3.25 + a_brightness * 2.35 + shapeMix * 1.58 + pulse * 0.22) * u_dpr * perspective * u_point_scale;
 	gl_PointSize = max(3.1, size);
 	v_color = vec4(rgb, alpha);
 }
@@ -3314,6 +3323,11 @@ void main() {
 		visual.locations.pointScale = gl.getUniformLocation(visual.program, "u_point_scale");
 		visual.locations.accent = gl.getUniformLocation(visual.program, "u_accent");
 		visual.locations.secondary = gl.getUniformLocation(visual.program, "u_secondary");
+		visual.locations.accentFrom = gl.getUniformLocation(visual.program, "u_accent_from");
+		visual.locations.secondaryFrom = gl.getUniformLocation(visual.program, "u_secondary_from");
+		visual.locations.accentTo = gl.getUniformLocation(visual.program, "u_accent_to");
+		visual.locations.secondaryTo = gl.getUniformLocation(visual.program, "u_secondary_to");
+		visual.locations.paletteT = gl.getUniformLocation(visual.program, "u_palette_t");
 		visual.buffers.source = gl.createBuffer();
 		visual.buffers.target = gl.createBuffer();
 		visual.buffers.color = gl.createBuffer();
@@ -3608,26 +3622,22 @@ void main() {
 		}
 
 		function transitionPosition(seed, now = performance.now()) {
-			const polarity = hashFloat(seed + 1.7) >= 0.5 ? 1 : -1;
-			const side = polarity > 0 ? 1 : 0;
-			const beadCount = 7;
-			const bead = Math.floor(hashFloat(seed + 5.9) * (beadCount - 0.0001));
-			const path = bead / (beadCount - 1);
-			const beadAngle = hashFloat(seed + 3.1) * Math.PI * 2;
-			const beadFill = Math.sqrt(hashFloat(seed + 7.4));
-			const headWeight = side ? 1 - path : path;
-			const radius = 0.044 + (headWeight ** 1.28) * 0.17;
-			const arc = Math.sin(path * Math.PI);
-			let x = lerp(-0.4, 0.4, path) + polarity * arc * 0.035 + Math.cos(beadAngle) * beadFill * radius;
-			let y = polarity * (0.25 + arc * 0.095) + Math.sin(beadAngle) * beadFill * radius;
+			const angle = hashFloat(seed + 3.1) * Math.PI * 2;
+			const innerRadius = 0.32;
+			const outerRadius = 0.56;
+			const fill = hashFloat(seed + 7.4);
+			const radius = Math.sqrt(lerp(innerRadius * innerRadius, outerRadius * outerRadius, fill));
+			const jitter = (hashFloat(seed + 9.2) - 0.5) * 0.012;
+			let x = Math.cos(angle) * (radius + jitter);
+			let y = Math.sin(angle) * (radius + jitter);
 
-			const rotate = now * 0.00058 - 0.36;
+			const rotate = now * 0.00105 - 0.78;
 			const cos = Math.cos(rotate);
 			const sin = Math.sin(rotate);
 			return {
-				x: (x * cos - y * sin) * 1.08,
-				y: (x * sin + y * cos) * 1.02,
-				z: (path - 0.5) * polarity * 0.18 + Math.sin(beadAngle) * radius * 0.24,
+				x: (x * cos - y * sin) * 1.03,
+				y: x * sin + y * cos,
+				z: (radius - 0.44) * 0.5 + Math.sin(angle * 2 + now * 0.0011) * 0.018,
 			};
 		}
 
@@ -3666,6 +3676,7 @@ void main() {
 			const coverT = clamp((now - visual.transitionStart) / visual.transitionDuration, 0, 1);
 			const ringT = clamp((now - visual.ringStart) / visual.ringDuration, 0, 1);
 			const ringHold = getRingHold(now);
+			const paletteT = easeOutCubic(clamp((now - visual.paletteStart) / visual.paletteDuration, 0, 1));
 			const palette = getDisplayPalette(now);
 
 			gl.clearColor(0, 0, 0, 0);
@@ -3684,6 +3695,11 @@ void main() {
 			gl.uniform1f(visual.locations.pointScale, Number(visual.options.pointScale) || 1);
 			gl.uniform3f(visual.locations.accent, palette.accent.r, palette.accent.g, palette.accent.b);
 			gl.uniform3f(visual.locations.secondary, palette.secondary.r, palette.secondary.g, palette.secondary.b);
+			gl.uniform3f(visual.locations.accentFrom, visual.accentFrom.r, visual.accentFrom.g, visual.accentFrom.b);
+			gl.uniform3f(visual.locations.secondaryFrom, visual.secondaryFrom.r, visual.secondaryFrom.g, visual.secondaryFrom.b);
+			gl.uniform3f(visual.locations.accentTo, visual.accent.r, visual.accent.g, visual.accent.b);
+			gl.uniform3f(visual.locations.secondaryTo, visual.secondary.r, visual.secondary.g, visual.secondary.b);
+			gl.uniform1f(visual.locations.paletteT, paletteT);
 			bindAttributes();
 
 			let drawCalls = 0;
@@ -3712,6 +3728,7 @@ void main() {
 				coverT: round(coverT, 3),
 				ringT: round(ringT, 3),
 				ringHold: round(ringHold, 3),
+				paletteT: round(paletteT, 3),
 				switchingCover: Boolean(visual.switchingCover),
 				beat: 0,
 				intensity: 0,
