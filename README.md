@@ -16,7 +16,13 @@ novaplayer is a single-file Spicetify extension that turns Spotify into a fullsc
 
 ## Install
 
-Run from this folder in PowerShell:
+Install directly from GitHub in PowerShell:
+
+```powershell
+$extRoot = (spicetify path -e root).Trim(); New-Item -ItemType Directory -Force -Path $extRoot | Out-Null; iwr -UseBasicParsing "https://raw.githubusercontent.com/faceplantDev/novaplayer/main/novaplayer.js" -OutFile (Join-Path $extRoot "novaplayer.js"); spicetify config extensions novaplayer.js; spicetify apply
+```
+
+Or run from a cloned copy of this repository:
 
 ```powershell
 .\install.ps1
