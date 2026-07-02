@@ -11,18 +11,35 @@
 	const LYRIC_ENDPOINT = "https://spclient.wg.spotify.com/color-lyrics/v2/track/";
 	const CLOUD_SAMPLE_SIZE = 240;
 	const CLOUD_MAX_POINTS = 52000;
-	const MAX_QUEUE_ITEMS = 16;
+	const MAX_QUEUE_ITEMS = 64;
 	const MAX_PLAYLIST_ITEMS = 32;
 	const DEBUG_SAMPLE_LIMIT = 120;
 	const DEBUG_UPDATE_INTERVAL = 1800;
-	const FLOW_UPDATE_INTERVAL = 0;
+	const FLOW_UPDATE_INTERVAL = 1000 / 30;
 	const MOTION_UPDATE_INTERVAL = 1000 / 24;
 	const PALETTE_TRANSITION_DURATION = 1350;
-	const PALETTE_UPDATE_INTERVAL = 1000 / 30;
+	const PALETTE_UPDATE_INTERVAL = 1000 / 15;
+	const TRACK_PALETTE_DELAY = 260;
+	const TRACK_SWITCH_RING_RAMP_DURATION = 620;
+	const TRACK_SWITCH_RING_TARGET = 0.9;
+	const COVER_SAMPLE_CHUNK_ROWS = 36;
 	const COSMOS_TEXTURE_WIDTH = 2560;
 	const COSMOS_TEXTURE_HEIGHT = 1440;
 	const SETTINGS_STORAGE_KEY = `${EXTENSION_ID}:settings`;
+	const INSTRUMENTAL_GAP_MIN_MS = 5600;
+	const INSTRUMENTAL_WORD_GAP_MIN_MS = 2600;
+	const INSTRUMENTAL_MIN_VISIBLE_MS = 1700;
+	const INSTRUMENTAL_LEAD_MS = 620;
+	const LYRIC_CAROUSEL_DURATION = 680;
+	const BACK_VOCAL_EFFECTS = [
+		{ value: "none", label: "Off" },
+		{ value: "float", label: "Float (current)" },
+		{ value: "echo", label: "Echo smear" },
+		{ value: "prism", label: "Prism pulse" },
+		{ value: "orbit", label: "Orbit sweep" },
+	];
 	const DEFAULT_SETTINGS = {
+		coverBackdrop: false,
 		cloudDensity: 0.92,
 		cloudDepth: 1.18,
 		cloudPointSize: 1,
@@ -33,13 +50,34 @@
 		starIntensity: 0.9,
 		cosmosBrightness: 0.92,
 		wordGlow: 1,
+		wordActiveScale: 1.055,
+		lyricsScale: 1,
+		backVocalEffect: "float",
+		showPreviousLyrics: true,
+		showCurrentLyrics: true,
+		showNextLyrics: true,
+		showLyricMode: true,
+		showLyricMeta: true,
+		showPlaylists: true,
+		showQueue: true,
+		showCoverArt: true,
+		queueVisibleCount: 16,
+		playlistsOnRight: false,
+		queueOnLeft: false,
 		lyricsOffsetX: 0,
 		lyricsOffsetY: 0,
+		lyricMetaGap: 0,
 		cloudOffsetX: 0,
 		cloudOffsetY: 0,
+		playlistsOffsetX: 0,
+		playlistsOffsetY: 0,
+		queueOffsetX: 0,
+		queueOffsetY: 0,
 		playerOffsetX: 0,
 		playerOffsetY: 0,
 		hideIntroLyrics: true,
+		playerAutoHide: false,
+		invertAccents: false,
 	};
 	const SETTING_DEFS = {
 		cloudDensity: { min: 0.25, max: 1, step: 0.01, label: "Cloud density", format: (value) => `${Math.round(value * 100)}%` },
@@ -52,13 +90,32 @@
 		starIntensity: { min: 0.2, max: 1.35, step: 0.01, label: "Star intensity", format: (value) => `${Math.round(value * 100)}%` },
 		cosmosBrightness: { min: 0.55, max: 1.25, step: 0.01, label: "Space brightness", format: (value) => `${Math.round(value * 100)}%` },
 		wordGlow: { min: 0, max: 1.5, step: 0.01, label: "Word glow", format: (value) => `${Math.round(value * 100)}%` },
+		wordActiveScale: { min: 1, max: 1.35, step: 0.005, label: "Current word scale", format: (value) => `${Math.round(value * 100)}%` },
+		lyricsScale: { min: 0.72, max: 1.38, step: 0.01, label: "Lyrics size", format: (value) => `${Math.round(value * 100)}%` },
+		queueVisibleCount: { min: 4, max: MAX_QUEUE_ITEMS, step: 1, label: "Up next items", format: (value) => `${Math.round(value)} tracks` },
 		lyricsOffsetX: { min: -420, max: 420, step: 1, label: "Lyrics X", format: (value) => `${Math.round(value)}px` },
 		lyricsOffsetY: { min: -300, max: 300, step: 1, label: "Lyrics Y", format: (value) => `${Math.round(value)}px` },
+		lyricMetaGap: { min: -260, max: 320, step: 1, label: "Title gap", format: (value) => `${Math.round(value)}px` },
 		cloudOffsetX: { min: -420, max: 420, step: 1, label: "Cloud X", format: (value) => `${Math.round(value)}px` },
 		cloudOffsetY: { min: -320, max: 320, step: 1, label: "Cloud Y", format: (value) => `${Math.round(value)}px` },
+		playlistsOffsetX: { min: -520, max: 520, step: 1, label: "Playlists X", format: (value) => `${Math.round(value)}px` },
+		playlistsOffsetY: { min: -320, max: 320, step: 1, label: "Playlists Y", format: (value) => `${Math.round(value)}px` },
+		queueOffsetX: { min: -520, max: 520, step: 1, label: "Up next X", format: (value) => `${Math.round(value)}px` },
+		queueOffsetY: { min: -320, max: 320, step: 1, label: "Up next Y", format: (value) => `${Math.round(value)}px` },
 		playerOffsetX: { min: -420, max: 420, step: 1, label: "Controls X", format: (value) => `${Math.round(value)}px` },
 		playerOffsetY: { min: -240, max: 240, step: 1, label: "Controls Y", format: (value) => `${Math.round(value)}px` },
 	};
+	const CLOUD_SETTING_KEYS = new Set(["cloudDensity", "cloudDepth", "cloudPointSize", "cloudBrightness", "cloudSaturation"]);
+	const LYRIC_RENDER_SETTING_KEYS = new Set([
+		"hideIntroLyrics",
+		"wordGlow",
+		"backVocalEffect",
+		"showPreviousLyrics",
+		"showCurrentLyrics",
+		"showNextLyrics",
+		"showLyricMode",
+		"showLyricMeta",
+	]);
 	const DEBUG_PROFILES = {
 		quality: {
 			visual: true,
@@ -70,7 +127,7 @@
 			world3d: true,
 			maxDpr: 1,
 			pointBudget: 52000,
-			visualFps: 36,
+			visualFps: 30,
 			pausedVisualFps: 1,
 		},
 		balanced: {
@@ -145,6 +202,7 @@
 		trackInfo: null,
 		lyrics: [],
 		lyricsHidden: false,
+		instrumentalBreak: null,
 		activeLine: 0,
 		activeWord: -1,
 		hasSyncedLyrics: false,
@@ -157,6 +215,7 @@
 		shuffle: false,
 		repeat: 0,
 		heart: false,
+		volume: 1,
 		fetchToken: 0,
 		audioToken: 0,
 		audioData: null,
@@ -181,6 +240,8 @@
 		playlistDrawerOpen: false,
 		renderProgressDirty: true,
 		renderLyricLineKey: "",
+		lyricSlotAnimations: [],
+		lyricCarouselGhosts: [],
 		backVocalKeys: new Set(),
 		renderedActiveWord: -1,
 		activeWordNode: null,
@@ -227,10 +288,11 @@
 		lastVisualStats: null,
 		trackTransitionTimer: 0,
 		paletteFrame: 0,
+		paletteScheduleTimer: 0,
+		paletteApplyToken: 0,
 		paletteRaw: null,
 		paletteReady: false,
 		cosmosSignature: "",
-		cosmosSwapTimer: 0,
 		cosmosReady: false,
 		debug: {
 			enabled: false,
@@ -279,8 +341,9 @@
 				</div>
 			</div>
 			<div class="novaplayer__settings-body">
-				<div class="novaplayer__settings-group">
+				<div class="novaplayer__settings-group" data-settings-section="cloud">
 					<h3>Point Cloud</h3>
+					${settingsToggle("coverBackdrop", "Cover backdrop", "Replace the point cloud with the track artwork.")}
 					${settingsSlider("cloudDensity")}
 					${settingsSlider("cloudDepth")}
 					${settingsSlider("cloudPointSize")}
@@ -297,22 +360,40 @@
 				<div class="novaplayer__settings-group">
 					<h3>Lyrics</h3>
 					${settingsSlider("wordGlow")}
-					<label class="novaplayer__setting-row novaplayer__setting-row--toggle">
-						<span>
-							<strong>Hide intro lyrics</strong>
-							<small>Keep the stage clean before the first vocal line.</small>
-						</span>
-						<input type="checkbox" data-setting="hideIntroLyrics" ${state.settings.hideIntroLyrics ? "checked" : ""}>
-					</label>
+					${settingsSlider("wordActiveScale")}
+					${settingsSlider("lyricsScale")}
+					${settingsSelect("backVocalEffect", "Back vocals", "Effect for bracketed background phrases.", BACK_VOCAL_EFFECTS)}
+					${settingsToggle("hideIntroLyrics", "Hide intro lyrics", "Keep the stage clean before the first vocal line.")}
+					${settingsToggle("showPreviousLyrics", "Previous lyrics", "Show the line before the current lyric.")}
+					${settingsToggle("showCurrentLyrics", "Current lyrics", "Show the active lyric line.")}
+					${settingsToggle("showNextLyrics", "Next lyrics", "Show the next lyric line.")}
+					${settingsToggle("showLyricMode", "Lyrics mode", "Show UNSYNCED, WORD FLOW, and role labels.")}
+					${settingsToggle("showLyricMeta", "Track and artist", "Show the title and artist chip near lyrics.")}
+					${settingsSlider("lyricMetaGap")}
+				</div>
+				<div class="novaplayer__settings-group">
+					<h3>Panels</h3>
+					${settingsToggle("showPlaylists", "Playlists panel", "Enable the side playlist drawer.")}
+					${settingsToggle("playlistsOnRight", "Playlists on right", "Open playlists from the right edge.")}
+					${settingsSlider("playlistsOffsetX")}
+					${settingsSlider("playlistsOffsetY")}
+					${settingsToggle("showQueue", "Up next", "Enable the queue panel.")}
+					${settingsSlider("queueVisibleCount")}
+					${settingsToggle("queueOnLeft", "Up next on left", "Move Up next to the left edge.")}
+					${settingsSlider("queueOffsetX")}
+					${settingsSlider("queueOffsetY")}
 				</div>
 				<div class="novaplayer__settings-group">
 					<h3>Layout</h3>
+					${settingsToggle("showCoverArt", "Cover art", "Show cover artwork in controls and cover backdrop mode.")}
+					${settingsToggle("invertAccents", "Invert accents", "Flip accent colors when lyrics lose contrast.")}
 					${settingsSlider("lyricsOffsetX")}
 					${settingsSlider("lyricsOffsetY")}
 					${settingsSlider("cloudOffsetX")}
 					${settingsSlider("cloudOffsetY")}
 					${settingsSlider("playerOffsetX")}
 					${settingsSlider("playerOffsetY")}
+					${settingsToggle("playerAutoHide", "Player on hover", "Hide controls until the bottom edge is hovered.")}
 				</div>
 			</div>
 		</section>
@@ -364,7 +445,9 @@
 		<section class="novaplayer__world" aria-label="novaplayer fullscreen player">
 			<div class="novaplayer__space">
 				<div class="novaplayer__art" aria-hidden="true">
-					<div class="novaplayer__cosmos"></div>
+					<div class="novaplayer__cosmos">
+						<canvas class="novaplayer__cosmos-texture"></canvas>
+					</div>
 					<div class="novaplayer__aura"></div>
 					<div class="novaplayer__cover-echo"></div>
 					<canvas class="novaplayer__cloud"></canvas>
@@ -393,6 +476,7 @@
 				<div class="novaplayer__backs" aria-hidden="true"></div>
 			</div>
 
+			<div class="novaplayer__player-hotzone" aria-hidden="true"></div>
 			<footer class="novaplayer__player" aria-label="Media controls">
 				<div class="novaplayer__now">
 					<div class="novaplayer__cover"></div>
@@ -423,8 +507,10 @@
 
 				<div class="novaplayer__side-actions">
 					<button class="novaplayer__icon-button" type="button" data-action="heart" aria-label="Save track" title="Save track"></button>
-					<button class="novaplayer__icon-button" type="button" data-action="minus-volume" aria-label="Volume down" title="Volume down"></button>
-					<button class="novaplayer__icon-button" type="button" data-action="plus-volume" aria-label="Volume up" title="Volume up"></button>
+					<label class="novaplayer__volume" title="Volume">
+						<span class="novaplayer__volume-icon" aria-hidden="true">${svgIcon("volume-two-wave", 16)}</span>
+						<input class="novaplayer__volume-slider" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume">
+					</label>
 				</div>
 			</footer>
 		</section>
@@ -441,6 +527,7 @@
 		settings: root.querySelector(".novaplayer__settings"),
 		debug: root.querySelector(".novaplayer__debug"),
 		cosmos: root.querySelector(".novaplayer__cosmos"),
+		cosmosTexture: root.querySelector(".novaplayer__cosmos-texture"),
 		cloud: root.querySelector(".novaplayer__cloud"),
 		coverEcho: root.querySelector(".novaplayer__cover-echo"),
 		aura: root.querySelector(".novaplayer__aura"),
@@ -469,6 +556,8 @@
 		playlists: root.querySelector(".novaplayer__playlists"),
 		playlistsList: root.querySelector(".novaplayer__playlists-list"),
 		playlistsCount: root.querySelector(".novaplayer__playlists-count"),
+		volumeIcon: root.querySelector(".novaplayer__volume-icon"),
+		volumeSlider: root.querySelector(".novaplayer__volume-slider"),
 	};
 	dom.debugValues = {};
 	for (const valueNode of root.querySelectorAll("[data-debug-value]")) {
@@ -482,8 +571,6 @@
 		next: root.querySelector('[data-action="next"]'),
 		repeat: root.querySelector('[data-action="repeat"]'),
 		heart: root.querySelector('[data-action="heart"]'),
-		minusVolume: root.querySelector('[data-action="minus-volume"]'),
-		plusVolume: root.querySelector('[data-action="plus-volume"]'),
 	};
 
 	const buttonIcons = {
@@ -493,20 +580,20 @@
 		next: "skip-forward",
 		repeat: "repeat",
 		heart: "heart",
-		minusVolume: "volume-one-wave",
-		plusVolume: "volume-two-wave",
 	};
 
 	for (const [name, button] of Object.entries(buttons)) {
 		button.innerHTML = svgIcon(buttonIcons[name], name === "play" ? 24 : 18);
 	}
 
+	const cosmosRenderer = createCosmosTextureRenderer(dom.cosmosTexture);
 	const visualizer = createPointCloudVisualizer(dom.cloud, fallbackCover, applyCoverPalette);
 	applyDebugOptions();
 
 	dom.close.addEventListener("click", closeStage);
 	dom.settingsToggle.addEventListener("click", () => toggleSettingsPanel());
 	dom.settings.addEventListener("input", handleSettingsInput);
+	dom.settings.addEventListener("change", handleSettingsInput);
 	dom.settings.addEventListener("click", handleSettingsClick);
 	root.addEventListener("pointermove", handlePointerMove, { passive: true });
 	root.addEventListener("wheel", handleStageWheel, { passive: false });
@@ -515,6 +602,7 @@
 	dom.playlists.addEventListener("pointerenter", openPlaylistDrawer);
 	dom.playlists.addEventListener("pointerleave", closePlaylistDrawer);
 	dom.progress.addEventListener("click", seekFromProgressClick);
+	dom.volumeSlider.addEventListener("input", handleVolumeInput);
 	dom.debug.addEventListener("click", handleDebugClick);
 	window.addEventListener("keydown", handleKeyDown);
 	document.addEventListener("fullscreenchange", handleFullscreenChange);
@@ -524,13 +612,7 @@
 	buttons.play.addEventListener("click", () => Spicetify.Player.togglePlay());
 	buttons.next.addEventListener("click", () => Spicetify.Player.next());
 	buttons.repeat.addEventListener("click", () => Spicetify.Player.toggleRepeat());
-	buttons.heart.addEventListener("click", () => {
-		Spicetify.Player.toggleHeart();
-		setTimeout(updateControlState, 150);
-	});
-	buttons.minusVolume.addEventListener("click", () => Spicetify.Player.decreaseVolume());
-	buttons.plusVolume.addEventListener("click", () => Spicetify.Player.increaseVolume());
-
+	buttons.heart.addEventListener("click", handleHeartClick);
 	const topbarButton = new Spicetify.Topbar.Button("novaplayer", "visualizer", openStage, false, true);
 	const playbarButton = new Spicetify.Playbar.Button("novaplayer", "visualizer", openStage, false, false, true);
 
@@ -558,6 +640,7 @@
 		updateButtonActiveState();
 		updateAllFromPlayer(true);
 		visualizer.resize();
+		cosmosRenderer.resize?.();
 		startTiltLoop();
 
 		if (root.requestFullscreen && !document.fullscreenElement) {
@@ -669,6 +752,9 @@
 			saveSettings();
 			updateSettingsControls();
 			applyStageSettings();
+			renderLyrics();
+			renderQueue();
+			refreshAccentPalette();
 		}
 	}
 
@@ -683,14 +769,27 @@
 			return;
 		}
 
-		state.settings[key] = input.type === "checkbox"
-			? Boolean(input.checked)
-			: clamp(Number(input.value), SETTING_DEFS[key]?.min ?? 0, SETTING_DEFS[key]?.max ?? 1);
+		if (input.type === "checkbox") {
+			state.settings[key] = Boolean(input.checked);
+		} else if (typeof DEFAULT_SETTINGS[key] === "string") {
+			state.settings[key] = normalizeStringSetting(key, input.value);
+		} else {
+			state.settings[key] = clamp(Number(input.value), SETTING_DEFS[key]?.min ?? 0, SETTING_DEFS[key]?.max ?? 1);
+		}
 		saveSettings();
 		updateSettingsControls();
 		applyStageSettings();
-		if (key === "hideIntroLyrics" || key === "wordGlow") {
+		if (LYRIC_RENDER_SETTING_KEYS.has(key)) {
 			renderLyrics();
+		}
+		if (key === "backVocalEffect") {
+			clearBackVocals();
+		}
+		if (key === "queueVisibleCount") {
+			renderQueue();
+		}
+		if (key === "invertAccents") {
+			refreshAccentPalette();
 		}
 	}
 
@@ -715,37 +814,87 @@
 			} else if (document.activeElement !== input) {
 				input.value = String(state.settings[key]);
 			}
+			input.disabled = CLOUD_SETTING_KEYS.has(key) && state.settings.coverBackdrop;
 		}
 
 		for (const output of dom.settings.querySelectorAll("[data-setting-output]")) {
 			const key = output.dataset.settingOutput;
 			output.textContent = formatSettingValue(key, state.settings[key]);
 		}
+
+		for (const section of dom.settings.querySelectorAll("[data-settings-section='cloud']")) {
+			section.classList.toggle("is-section-disabled", Boolean(state.settings.coverBackdrop));
+		}
 	}
 
 	function applyStageSettings() {
 		const settings = state.settings;
+		const lyricsScale = clamp(Number(settings.lyricsScale) || 1, SETTING_DEFS.lyricsScale.min, SETTING_DEFS.lyricsScale.max);
 		setStyleProperty(root, "--novaplayer-cloud-brightness", settings.cloudBrightness.toFixed(3));
 		setStyleProperty(root, "--novaplayer-cloud-saturation", settings.cloudSaturation.toFixed(3));
 		setStyleProperty(root, "--novaplayer-star-opacity", settings.starIntensity.toFixed(3));
 		setStyleProperty(root, "--novaplayer-cosmos-brightness", settings.cosmosBrightness.toFixed(3));
 		setStyleProperty(root, "--novaplayer-word-glow", settings.wordGlow.toFixed(3));
+		setStyleProperty(root, "--novaplayer-word-current-scale", clamp(Number(settings.wordActiveScale) || 1.055, SETTING_DEFS.wordActiveScale.min, SETTING_DEFS.wordActiveScale.max).toFixed(3));
+		setStyleProperty(root, "--novaplayer-lyric-current-min", `${(34 * lyricsScale).toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-lyric-current-fluid", `${(4.8 * lyricsScale).toFixed(2)}vw`);
+		setStyleProperty(root, "--novaplayer-lyric-current-max", `${(82 * lyricsScale).toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-lyric-side-min", `${(13 * lyricsScale).toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-lyric-side-fluid", `${(1 * lyricsScale).toFixed(2)}vw`);
+		setStyleProperty(root, "--novaplayer-lyric-side-max", `${(20 * lyricsScale).toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-back-vocal-min", `${(14 * lyricsScale).toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-back-vocal-fluid", `${(1.25 * lyricsScale).toFixed(2)}vw`);
+		setStyleProperty(root, "--novaplayer-back-vocal-max", `${(24 * lyricsScale).toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-lyric-mobile-current-min", `${(32 * lyricsScale).toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-lyric-mobile-current-fluid", `${(11 * lyricsScale).toFixed(2)}vw`);
+		setStyleProperty(root, "--novaplayer-lyric-mobile-current-max", `${(58 * lyricsScale).toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-back-mobile-min", `${(13 * lyricsScale).toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-back-mobile-fluid", `${(3.6 * lyricsScale).toFixed(2)}vw`);
+		setStyleProperty(root, "--novaplayer-back-mobile-max", `${(20 * lyricsScale).toFixed(1)}px`);
 		setStyleProperty(root, "--novaplayer-layout-lyrics-x", `${settings.lyricsOffsetX.toFixed(1)}px`);
 		setStyleProperty(root, "--novaplayer-layout-lyrics-y", `${settings.lyricsOffsetY.toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-layout-lyric-meta-gap", `${settings.lyricMetaGap.toFixed(1)}px`);
 		setStyleProperty(root, "--novaplayer-layout-cloud-x", `${settings.cloudOffsetX.toFixed(1)}px`);
 		setStyleProperty(root, "--novaplayer-layout-cloud-y", `${settings.cloudOffsetY.toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-layout-playlists-x", `${settings.playlistsOffsetX.toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-layout-playlists-y", `${settings.playlistsOffsetY.toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-layout-queue-x", `${settings.queueOffsetX.toFixed(1)}px`);
+		setStyleProperty(root, "--novaplayer-layout-queue-y", `${settings.queueOffsetY.toFixed(1)}px`);
 		setStyleProperty(root, "--novaplayer-layout-player-x", `${settings.playerOffsetX.toFixed(1)}px`);
 		setStyleProperty(root, "--novaplayer-layout-player-y", `${settings.playerOffsetY.toFixed(1)}px`);
+		const backVocalEffect = getBackVocalEffect();
+		root.dataset.backVocalEffect = backVocalEffect;
+		root.classList.toggle("is-cover-backdrop", Boolean(settings.coverBackdrop));
+		root.classList.toggle("is-playlists-right", Boolean(settings.playlistsOnRight));
+		root.classList.toggle("is-queue-left", Boolean(settings.queueOnLeft));
+		root.classList.toggle("hide-lyric-prev", !settings.showPreviousLyrics);
+		root.classList.toggle("hide-lyric-current", !settings.showCurrentLyrics);
+		root.classList.toggle("hide-lyric-next", !settings.showNextLyrics);
+		root.classList.toggle("hide-lyric-mode", !settings.showLyricMode);
+		root.classList.toggle("hide-lyric-meta", !settings.showLyricMeta);
+		root.classList.toggle("hide-playlists", !settings.showPlaylists);
+		root.classList.toggle("hide-queue", !settings.showQueue);
+		root.classList.toggle("hide-cover-art", !settings.showCoverArt);
+		root.classList.toggle("is-player-hover-reveal", Boolean(settings.playerAutoHide));
+		if (backVocalEffect === "none") {
+			clearBackVocals();
+		}
+		if (!settings.showPlaylists) {
+			closePlaylistDrawer();
+		}
+		state.queueOffset = clamp(state.queueOffset, 0, getMaxQueueOffset());
+		updateQueueCarouselLayout();
 		visualizer.setOptions?.(getEffectiveVisualizerOptions());
 	}
 
 	function getEffectiveVisualizerOptions() {
 		const options = state.debug.options;
-		const pointBudget = options.visual
+		const visualEnabled = Boolean(options.visual && !state.settings.coverBackdrop);
+		const pointBudget = visualEnabled
 			? Math.round(Math.max(1200, Math.min(CLOUD_MAX_POINTS, (options.pointBudget || CLOUD_MAX_POINTS) * state.settings.cloudDensity)))
 			: 0;
 		return {
-			visual: options.visual,
+			visual: visualEnabled,
 			chroma: options.chroma,
 			maxDpr: options.maxDpr,
 			pointBudget,
@@ -942,10 +1091,13 @@
 				skippedVisualFrames: state.debug.skippedVisualFrames,
 			},
 			visual,
+			cosmos: cosmosRenderer.getStats?.() || null,
 			ui: {
 				root: formatRect(root),
 				world: formatRect(dom.world),
 				space: formatRect(dom.space),
+				cosmos: formatRect(dom.cosmos),
+				cosmosTexture: formatRect(dom.cosmosTexture),
 				lyrics: formatRect(dom.lyrics),
 				player: formatRect(dom.player),
 				queue: formatRect(dom.queue),
@@ -1050,15 +1202,23 @@
 		state.targetTiltY = clamp(y * -22, -25, 25);
 		state.lastPointerMove = performance.now();
 
-		if (event.clientX <= 46) {
+		const playlistsRight = isPlaylistsRight();
+		const nearPlaylistEdge = playlistsRight
+			? window.innerWidth - event.clientX <= 46
+			: event.clientX <= 46;
+		const awayFromPlaylist = playlistsRight
+			? event.clientX < window.innerWidth - 430
+			: event.clientX > 430;
+
+		if (nearPlaylistEdge) {
 			openPlaylistDrawer();
-		} else if (state.playlistDrawerOpen && event.clientX > 430 && !dom.playlists.matches(":hover")) {
+		} else if (state.playlistDrawerOpen && awayFromPlaylist && !dom.playlists.matches(":hover")) {
 			closePlaylistDrawer();
 		}
 	}
 
 	function handleStageWheel(event) {
-		if (!state.open || event.target.closest(".novaplayer__queue, .novaplayer__playlists, .novaplayer__progress")) {
+		if (!state.open || event.target.closest(".novaplayer__settings, .novaplayer__queue, .novaplayer__playlists, .novaplayer__progress, .novaplayer__volume")) {
 			return;
 		}
 
@@ -1067,7 +1227,7 @@
 	}
 
 	function openPlaylistDrawer() {
-		if (!state.open) {
+		if (!state.open || !state.settings.showPlaylists) {
 			return;
 		}
 
@@ -1081,6 +1241,10 @@
 	function closePlaylistDrawer() {
 		state.playlistDrawerOpen = false;
 		root.classList.remove("is-playlists-open");
+	}
+
+	function isPlaylistsRight() {
+		return Boolean(state.settings.playlistsOnRight);
 	}
 
 	async function loadPlaylists() {
@@ -1233,7 +1397,7 @@
 	}
 
 	function handleQueueWheel(event) {
-		if (!state.open || state.queueLength < 2) {
+		if (!state.open || state.queueLength < 2 || getMaxQueueOffset() <= 0) {
 			return;
 		}
 
@@ -1347,6 +1511,7 @@
 				const cloudY = motion.cloudShiftY + settings.cloudOffsetY;
 				const lyricsX = motion.lyricsShiftX + settings.lyricsOffsetX;
 				const lyricsY = motion.lyricsShiftY + settings.lyricsOffsetY;
+				const lyricMetaY = lyricsY + settings.lyricMetaGap;
 				const playerX = settings.playerOffsetX;
 				const playerY = motion.playerY + settings.playerOffsetY;
 				const coverRot = -1.5 + motion.cloudRoll * 57.2958;
@@ -1354,8 +1519,8 @@
 				visualizer.setMotion?.({ pitch: motion.cloudPitch, yaw: motion.cloudYaw, roll: motion.cloudRoll });
 				setStyleValue(dom.cloud, "transform", `translate(calc(-50% + ${cloudX.toFixed(2)}px), calc(-50% + ${cloudY.toFixed(2)}px)) rotate(${coverRot.toFixed(3)}deg) scale(1)`);
 				setStyleValue(dom.lyrics, "transform", `translate(calc(-50% + ${lyricsX.toFixed(2)}px), calc(-50% + ${lyricsY.toFixed(2)}px)) perspective(1180px) rotateX(${motion.lyricsPitch.toFixed(3)}deg) rotateY(${motion.lyricsYaw.toFixed(3)}deg) rotateZ(${motion.lyricsRoll.toFixed(3)}deg)`);
-				setStyleValue(dom.lyricMeta, "transform", `translate(calc(-50% + ${lyricsX.toFixed(2)}px), calc(-50% + ${lyricsY.toFixed(2)}px))`);
-				setStyleValue(dom.player, "transform", `translateX(calc(-50% + ${playerX.toFixed(2)}px)) translateY(${playerY.toFixed(2)}px) scale(${motion.playerScale.toFixed(4)})`);
+				setStyleValue(dom.lyricMeta, "transform", `translate(calc(-50% + ${lyricsX.toFixed(2)}px), calc(-50% + ${lyricMetaY.toFixed(2)}px))`);
+				setStyleValue(dom.player, "transform", `translateX(calc(-50% + ${playerX.toFixed(2)}px)) translateY(calc(${playerY.toFixed(2)}px + var(--novaplayer-player-reveal-y))) scale(${motion.playerScale.toFixed(4)})`);
 				state.lastMotionUpdate = time;
 				state.motionStylesApplied = true;
 			} else if (state.motionStylesApplied) {
@@ -1421,6 +1586,7 @@
 		clearMotionStyles();
 		setStyleProperty(dom.cosmos, "--novaplayer-flow-opacity", "0.28");
 		setStyleProperty(dom.cosmos, "--novaplayer-flow-scale", "1");
+		cosmosRenderer.pause?.();
 		visualizer.pause();
 		state.targetTiltX = 0;
 		state.targetTiltY = 0;
@@ -1504,6 +1670,9 @@
 			state.trackUri = info.uri;
 			state.queueOffset = 0;
 			state.queueWheelRemainder = 0;
+			if (isNewTrack) {
+				cancelPendingPaletteWork();
+			}
 			triggerTrackTransition();
 			applyCover(info.cover);
 			renderTrackInfo(info);
@@ -1539,10 +1708,41 @@
 		}
 
 		const target = normalizePaletteRaw(palette);
-		updateCosmosTexture(target);
+		const token = ++state.paletteApplyToken;
+		clearScheduledPalette();
+		if (state.paletteFrame) {
+			cancelAnimationFrame(state.paletteFrame);
+			state.paletteFrame = 0;
+		}
+
+		const delay = state.paletteReady ? TRACK_PALETTE_DELAY : 0;
+		if (delay > 0) {
+			state.paletteScheduleTimer = setTimeout(() => {
+				state.paletteScheduleTimer = 0;
+				requestAnimationFrame(() => commitCoverPalette(target, token));
+			}, delay);
+			return;
+		}
+
+		commitCoverPalette(target, token);
+	}
+
+	function clearScheduledPalette() {
+		if (state.paletteScheduleTimer) {
+			clearTimeout(state.paletteScheduleTimer);
+			state.paletteScheduleTimer = 0;
+		}
+	}
+
+	function commitCoverPalette(target, token) {
+		if (token !== state.paletteApplyToken) {
+			return;
+		}
+
 		const from = state.paletteRaw || readCurrentPaletteRaw() || target;
 		const duration = state.paletteReady ? PALETTE_TRANSITION_DURATION : 0;
 		state.paletteReady = true;
+		scheduleCosmosTextureUpdate(target, token, duration ? 80 : 0);
 
 		if (state.paletteFrame) {
 			cancelAnimationFrame(state.paletteFrame);
@@ -1558,6 +1758,11 @@
 		const start = performance.now();
 		let lastUpdate = 0;
 		const step = (now) => {
+			if (token !== state.paletteApplyToken) {
+				state.paletteFrame = 0;
+				return;
+			}
+
 			const progress = clamp((now - start) / duration, 0, 1);
 			const eased = easeInOutCubic(progress);
 			if (!lastUpdate || now - lastUpdate >= PALETTE_UPDATE_INTERVAL || progress >= 1) {
@@ -1575,6 +1780,22 @@
 		};
 
 		state.paletteFrame = requestAnimationFrame(step);
+	}
+
+	function scheduleCosmosTextureUpdate(target, token, delay = 0) {
+		const run = () => {
+			requestAnimationFrame(() => {
+				if (token === state.paletteApplyToken) {
+					updateCosmosTexture(target);
+				}
+			});
+		};
+
+		if (delay > 0) {
+			setTimeout(run, delay);
+		} else {
+			run();
+		}
 	}
 
 	async function loadAudioAnalysis(info) {
@@ -1705,6 +1926,9 @@
 		flow.rotate = lerp(flow.rotate, rotate, smooth);
 		state.flowReady = true;
 
+		const flowShiftX = ((flow.x - 50) * 0.32 * motionAmount).toFixed(2);
+		const flowShiftY = ((flow.y - 50) * 0.24 * motionAmount).toFixed(2);
+
 		setStyleProperty(dom.cosmos, "--novaplayer-flow-x", `${flow.x.toFixed(2)}%`);
 		setStyleProperty(dom.cosmos, "--novaplayer-flow-y", `${flow.y.toFixed(2)}%`);
 		setStyleProperty(dom.cosmos, "--novaplayer-flow-alt-x", `${flow.altX.toFixed(2)}%`);
@@ -1715,13 +1939,19 @@
 		setStyleProperty(dom.cosmos, "--novaplayer-flow-scale", flow.scale.toFixed(3));
 		setStyleProperty(dom.cosmos, "--novaplayer-flow-saturation", flow.saturation.toFixed(3));
 		setStyleProperty(dom.cosmos, "--novaplayer-flow-blur", `${flow.blur.toFixed(1)}px`);
-		setStyleProperty(dom.cosmos, "--novaplayer-flow-shift-x", `${((flow.x - 50) * 0.32 * motionAmount).toFixed(2)}px`);
-		setStyleProperty(dom.cosmos, "--novaplayer-flow-shift-y", `${((flow.y - 50) * 0.24 * motionAmount).toFixed(2)}px`);
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-shift-x", `${flowShiftX}px`);
+		setStyleProperty(dom.cosmos, "--novaplayer-flow-shift-y", `${flowShiftY}px`);
 		setStyleProperty(dom.cosmos, "--novaplayer-nebula-opacity", flow.nebulaOpacity.toFixed(3));
 		setStyleProperty(dom.cosmos, "--novaplayer-nebula-hot-alpha", flow.hotAlpha.toFixed(3));
 		setStyleProperty(dom.cosmos, "--novaplayer-nebula-cyan-alpha", flow.cyanAlpha.toFixed(3));
 		setStyleProperty(dom.cosmos, "--novaplayer-nebula-lime-alpha", flow.limeAlpha.toFixed(3));
 		setStyleProperty(dom.cosmos, "--novaplayer-nebula-rotate", `${flow.rotate.toFixed(3)}deg`);
+		cosmosRenderer.setFlow?.({
+			shiftX: Number(flowShiftX),
+			shiftY: Number(flowShiftY),
+			starOpacity: settings.starIntensity,
+		});
+		cosmosRenderer.render?.(time);
 	}
 
 	function getMusicEnergy(seconds) {
@@ -1769,6 +1999,7 @@
 		const token = ++state.fetchToken;
 		state.lyrics = fallbackLyrics(info, "Loading lyrics");
 		state.lyricsHidden = false;
+		state.instrumentalBreak = null;
 		state.hasSyncedLyrics = false;
 		state.activeLine = 0;
 		state.activeWord = -1;
@@ -1808,6 +2039,10 @@
 				for (let index = 0; index < lines.length; index += 1) {
 					lines[index].end = lines[index + 1]?.start || getDurationSafe() || lines[index].start + 3600;
 					syncBackVocalTiming(lines[index]);
+					lines[index].instrumentalBreaks = getWordInstrumentalBreaks(lines[index]);
+					const instrumentalBreak = isPrimaryLyricLine(lines[index]) ? getLineInstrumentalBreak(lines[index], lines[index].end) : null;
+					lines[index].instrumentalStart = instrumentalBreak?.start || 0;
+					lines[index].instrumentalEnd = instrumentalBreak?.end || 0;
 					if (!lines[index].words.length && rawLyrics.syncType === "LINE_SYNCED") {
 						lines[index].words = estimateLyricWords(lines[index]);
 						lines[index].estimatedWords = true;
@@ -1845,6 +2080,7 @@
 	function hideLyrics() {
 		state.lyrics = [];
 		state.lyricsHidden = true;
+		state.instrumentalBreak = null;
 		state.hasSyncedLyrics = false;
 		state.activeLine = 0;
 		state.activeWord = -1;
@@ -1875,18 +2111,24 @@
 			}
 		}
 
-		const nextWord = state.hasWordHighlight ? getActiveWordIndex(state.lyrics[nextIndex], state.progressMs) : -1;
-		showTimedBackVocals(state.progressMs + 70, nextIndex);
+		const instrumentalBreak = getInstrumentalBreakState(state.progressMs, nextIndex);
+		const nextWord = !instrumentalBreak && state.hasWordHighlight ? getActiveWordIndex(state.lyrics[nextIndex], state.progressMs) : -1;
+		if (!instrumentalBreak) {
+			showTimedBackVocals(state.progressMs + 70, nextIndex);
+		}
 
 		const preLyricsChanged = dom.lyrics.classList.contains("is-pre-lyrics") !== isBeforeFirstLyric();
-		const lineChanged = force || nextIndex !== state.activeLine || preLyricsChanged;
+		const breakChanged = (state.instrumentalBreak?.key || "") !== (instrumentalBreak?.key || "");
+		const lineChanged = force || nextIndex !== state.activeLine || preLyricsChanged || breakChanged;
 		const wordChanged = nextWord !== state.activeWord;
 
 		if (lineChanged) {
 			state.activeLine = nextIndex;
+			state.instrumentalBreak = instrumentalBreak;
 			state.activeWord = nextWord;
 			renderLyrics(true);
 		} else if (wordChanged) {
+			state.instrumentalBreak = instrumentalBreak;
 			state.activeWord = nextWord;
 			updateLyricWordClasses(nextWord);
 		}
@@ -1894,6 +2136,7 @@
 
 	function renderLyrics(animated = false) {
 		if (state.lyricsHidden || !state.lyrics.length) {
+			cancelLyricCarouselAnimations();
 			state.backVocalKeys = new Set();
 			dom.backs.replaceChildren();
 			dom.lyricPrev.textContent = "";
@@ -1903,12 +2146,13 @@
 			dom.vocalRole.hidden = true;
 			dom.lyrics.dataset.role = "";
 			dom.lyrics.classList.toggle("is-hidden", state.lyricsHidden);
-			dom.lyrics.classList.remove("has-synced", "has-word-sync", "is-line-changing", "is-pre-lyrics");
+			dom.lyrics.classList.remove("has-synced", "has-word-sync", "is-line-changing", "is-pre-lyrics", "is-instrumental");
 			return;
 		}
 
 		dom.lyrics.classList.remove("is-hidden");
 		if (isBeforeFirstLyric()) {
+			cancelLyricCarouselAnimations();
 			state.backVocalKeys = new Set();
 			dom.backs.replaceChildren();
 			dom.lyricPrev.textContent = "";
@@ -1918,11 +2162,17 @@
 			dom.vocalRole.hidden = true;
 			dom.lyrics.dataset.role = "";
 			dom.lyrics.classList.add("is-pre-lyrics");
-			dom.lyrics.classList.remove("has-synced", "has-word-sync", "is-line-changing");
+			dom.lyrics.classList.remove("has-synced", "has-word-sync", "is-line-changing", "is-instrumental");
 			return;
 		}
 		dom.lyrics.classList.remove("is-pre-lyrics");
 
+		if (state.instrumentalBreak) {
+			renderInstrumentalBreak(state.instrumentalBreak, animated);
+			return;
+		}
+
+		dom.lyrics.classList.remove("is-instrumental");
 		const active = state.lyrics[state.activeLine] || state.lyrics[0] || { text: "" };
 
 		const displayIndex = active.role === "back" || !active.text ? findDisplayLyricIndex(state.activeLine) : state.activeLine;
@@ -1934,6 +2184,7 @@
 		const lineChanged = lineKey !== state.renderLyricLineKey;
 
 		if (lineChanged) {
+			const carouselSnapshot = animated ? captureLyricCarouselSnapshot() : null;
 			state.renderLyricLineKey = lineKey;
 			dom.lyricPrev.textContent = previous?.text || "";
 			renderCurrentLyric(current);
@@ -1944,13 +2195,580 @@
 			dom.lyrics.dataset.role = current.role || "";
 			dom.lyrics.classList.toggle("has-synced", state.hasSyncedLyrics);
 			dom.lyrics.classList.toggle("has-word-sync", state.hasWordHighlight);
+			updateLyricWordClasses(state.hasWordHighlight && displayIndex === state.activeLine ? state.activeWord : -1);
+			if (carouselSnapshot) {
+				playLyricCarouselTransition(carouselSnapshot);
+			}
+			return;
 		}
 
 		updateLyricWordClasses(state.hasWordHighlight && displayIndex === state.activeLine ? state.activeWord : -1);
+	}
 
-		if (animated && lineChanged) {
-			restartClass(dom.lyrics, "is-line-changing");
+	function renderInstrumentalBreak(breakInfo, animated = false) {
+		const lineKey = `instrumental:${breakInfo.key}`;
+		const lineChanged = lineKey !== state.renderLyricLineKey;
+
+		if (lineChanged) {
+			const carouselSnapshot = animated ? captureLyricCarouselSnapshot() : null;
+			state.renderLyricLineKey = lineKey;
+			state.renderedActiveWord = -1;
+			state.activeWordNode = null;
+			state.backVocalKeys = new Set();
+			dom.backs.replaceChildren();
+			dom.lyricPrev.textContent = breakInfo.previousText || breakInfo.previous?.text || "";
+			dom.lyricCurrent.replaceChildren(createInstrumentalIndicator());
+			dom.lyricNext.textContent = breakInfo.nextText || breakInfo.next?.text || "";
+			dom.vocalRole.textContent = "INTERLUDE";
+			dom.vocalRole.hidden = false;
+			dom.lyrics.dataset.role = "instrumental";
+			dom.lyrics.classList.add("is-instrumental", "has-synced");
+			dom.lyrics.classList.remove("has-word-sync");
+			if (carouselSnapshot) {
+				playLyricCarouselTransition(carouselSnapshot);
+			}
 		}
+	}
+
+	function captureLyricCarouselSnapshot() {
+		cancelLyricCarouselAnimations();
+		const slots = getLyricCarouselSlots()
+			.map(({ slot, node }) => captureLyricSlot(slot, node))
+			.filter(Boolean);
+		return { slots };
+	}
+
+	function captureLyricSlot(slot, node) {
+		if (!isLyricSlotVisible(node)) {
+			return null;
+		}
+
+		const text = cleanLyricLine(node.textContent || "");
+		if (!text) {
+			return null;
+		}
+
+		const rect = node.getBoundingClientRect();
+		if (!rect.width || !rect.height) {
+			return null;
+		}
+
+		const style = window.getComputedStyle(node);
+		return {
+			slot,
+			text,
+			rect: {
+				left: rect.left,
+				top: rect.top,
+				width: rect.width,
+				height: rect.height,
+			},
+			frame: getLyricSlotFrame(node, rect),
+			clone: node.cloneNode(true),
+			role: dom.lyrics.dataset.role || "",
+			isInstrumental: dom.lyrics.classList.contains("is-instrumental"),
+			opacity: Number.parseFloat(style.opacity) || 1,
+			filter: style.filter && style.filter !== "none" ? style.filter : "blur(0)",
+			font: {
+				color: style.color,
+				fontSize: style.fontSize,
+				fontWeight: style.fontWeight,
+				lineHeight: style.lineHeight,
+				textShadow: style.textShadow,
+				whiteSpace: style.whiteSpace,
+			},
+		};
+	}
+
+	function playLyricCarouselTransition(snapshot) {
+		if (!snapshot?.slots?.length || !dom.lyrics.isConnected) {
+			return;
+		}
+
+		const targetSlots = getLyricCarouselSlots()
+			.map(({ slot, node }) => captureLyricSlot(slot, node))
+			.filter(Boolean);
+		const usedOldSlots = new Set();
+		const jobs = [];
+
+		for (const targetSlot of targetSlots) {
+			const oldSlot = findMatchingLyricSlot(snapshot.slots, targetSlot.text, usedOldSlots);
+			if (oldSlot) {
+				usedOldSlots.add(oldSlot);
+				jobs.push(createLyricGhostMoveJob(oldSlot, targetSlot));
+			} else {
+				jobs.push(createLyricGhostFadeInJob(targetSlot));
+			}
+		}
+
+		for (const oldSlot of snapshot.slots) {
+			if (!usedOldSlots.has(oldSlot)) {
+				jobs.push(createLyricGhostFadeOutJob(oldSlot));
+			}
+		}
+
+		if (!jobs.length) {
+			return;
+		}
+
+		syncLyricWordFlowGhostsFromCurrent();
+		forceLyricGhostFrame(jobs);
+		dom.lyrics.classList.add("is-lyric-carousel-running");
+
+		for (const job of jobs) {
+			const animation = job.ghost.animate(job.frames, job.options);
+			trackLyricSlotAnimation(animation, job.ghost);
+		}
+	}
+
+	function getLyricCarouselSlots() {
+		return [
+			{ slot: "prev", node: dom.lyricPrev },
+			{ slot: "current", node: dom.lyricCurrent },
+			{ slot: "next", node: dom.lyricNext },
+		];
+	}
+
+	function isLyricSlotVisible(node) {
+		if (!node || !node.isConnected || !node.getClientRects().length) {
+			return false;
+		}
+
+		const style = window.getComputedStyle(node);
+		return style.display !== "none" && style.visibility !== "hidden";
+	}
+
+	function findMatchingLyricSlot(slots, text, usedSlots) {
+		const normalized = cleanLyricLine(text);
+		if (!normalized) {
+			return null;
+		}
+
+		return slots.find((slot) => !usedSlots.has(slot) && slot.text === normalized) || null;
+	}
+
+	function createLyricGhostMoveJob(oldSlot, targetSlot) {
+		const ghost = createLyricGhost(targetSlot, targetSlot, targetSlot, {
+			trackWordFlow: targetSlot.slot === "current",
+		});
+		const frames = [
+			{
+				transform: lyricGhostTransformBetween(oldSlot, targetSlot),
+			},
+			{
+				transform: "translate3d(0, 0, 0) scale(1)",
+			},
+		];
+		applyLyricGhostAnimationFrame(ghost, frames[0]);
+		return { ghost, frames, options: getLyricCarouselTiming() };
+	}
+
+	function createLyricGhostFadeInJob(targetSlot) {
+		const ghost = createLyricGhost(targetSlot, targetSlot, targetSlot, {
+			trackWordFlow: targetSlot.slot === "current",
+		});
+		const y = targetSlot.slot === "prev" ? -18 : targetSlot.slot === "next" ? 18 : 34;
+		const frames = [
+			{
+				opacity: 0,
+				filter: targetSlot.slot === "current" ? "blur(9px)" : "blur(4px)",
+				transform: `translate3d(0, ${y}px, 0) scale(.96)`,
+			},
+			{
+				opacity: targetSlot.opacity,
+				filter: targetSlot.filter,
+				transform: "translate3d(0, 0, 0) scale(1)",
+			},
+		];
+		applyLyricGhostAnimationFrame(ghost, frames[0]);
+		return { ghost, frames, options: getLyricCarouselTiming() };
+	}
+
+	function createLyricGhostFadeOutJob(oldSlot) {
+		const ghost = createLyricGhost(oldSlot, oldSlot);
+		const y = oldSlot.slot === "prev" ? -24 : oldSlot.slot === "next" ? 24 : -34;
+		const frames = [
+			{
+				opacity: oldSlot.opacity,
+				filter: oldSlot.filter,
+				transform: "translate3d(0, 0, 0) scale(1)",
+			},
+			{
+				opacity: 0,
+				filter: "blur(7px)",
+				transform: `translate3d(0, ${y}px, 0) scale(.96)`,
+			},
+		];
+		const options = {
+			duration: Math.round(LYRIC_CAROUSEL_DURATION * 0.78),
+			easing: "cubic-bezier(.22, .72, .18, 1)",
+			fill: "both",
+		};
+		applyLyricGhostAnimationFrame(ghost, frames[0]);
+		return { ghost, frames, options };
+	}
+
+	function createLyricGhost(slot, targetSlot, frameSlot = slot, options = {}) {
+		const ghost = slot.clone.cloneNode(true);
+		const ghostSlot = targetSlot?.slot || slot.slot;
+		ghost.removeAttribute("id");
+		ghost.classList.add("novaplayer__lyric-ghost", `novaplayer__lyric-ghost--${ghostSlot}`);
+		ghost.dataset.role = slot.role || "";
+		if (options.trackWordFlow) {
+			ghost.dataset.wordFlowSource = "current";
+		}
+		ghost.setAttribute("aria-hidden", "true");
+		ghost.classList.toggle("is-instrumental", Boolean(slot.isInstrumental));
+		applyLyricGhostFrame(ghost, frameSlot);
+		dom.lyrics.append(ghost);
+		state.lyricCarouselGhosts.push(ghost);
+		return ghost;
+	}
+
+	function slotFrame(slot) {
+		return {
+			left: `${slot.frame.left.toFixed(2)}px`,
+			top: `${slot.frame.top.toFixed(2)}px`,
+			width: `${slot.frame.width.toFixed(2)}px`,
+			height: `${slot.frame.height.toFixed(2)}px`,
+			minHeight: `${slot.frame.height.toFixed(2)}px`,
+			opacity: slot.opacity,
+			filter: slot.filter,
+			color: slot.font.color,
+			fontSize: slot.font.fontSize,
+			fontWeight: slot.font.fontWeight,
+			lineHeight: slot.font.lineHeight,
+			textShadow: slot.font.textShadow,
+			transformOrigin: "50% 50%",
+			transform: "translate3d(0, 0, 0) scale(1)",
+		};
+	}
+
+	function getLyricSlotFrame(node, rect) {
+		return {
+			left: Number.isFinite(node.offsetLeft) ? node.offsetLeft : rect.left,
+			top: Number.isFinite(node.offsetTop) ? node.offsetTop : rect.top,
+			width: node.offsetWidth || rect.width,
+			height: node.offsetHeight || rect.height,
+		};
+	}
+
+	function applyLyricGhostFrame(ghost, slot) {
+		const frame = slotFrame(slot);
+		for (const [property, value] of Object.entries(frame)) {
+			ghost.style[property] = String(value);
+		}
+	}
+
+	function applyLyricGhostAnimationFrame(ghost, frame) {
+		for (const [property, value] of Object.entries(frame)) {
+			ghost.style[property] = String(value);
+		}
+	}
+
+	function forceLyricGhostFrame(jobs) {
+		for (const job of jobs) {
+			job.ghost.getBoundingClientRect();
+		}
+	}
+
+	function lyricGhostTransformBetween(fromSlot, toSlot) {
+		const fromCenterX = fromSlot.frame.left + fromSlot.frame.width / 2;
+		const fromCenterY = fromSlot.frame.top + fromSlot.frame.height / 2;
+		const toCenterX = toSlot.frame.left + toSlot.frame.width / 2;
+		const toCenterY = toSlot.frame.top + toSlot.frame.height / 2;
+		const scale = lyricGhostFontScale(fromSlot, toSlot);
+		return `translate3d(${(fromCenterX - toCenterX).toFixed(2)}px, ${(fromCenterY - toCenterY).toFixed(2)}px, 0) scale(${scale.toFixed(3)})`;
+	}
+
+	function lyricGhostFontScale(fromSlot, toSlot) {
+		const fromSize = parseCssPixels(fromSlot.font.fontSize, 1);
+		const toSize = parseCssPixels(toSlot.font.fontSize, fromSize);
+		return clamp(fromSize / Math.max(toSize, 1), 0.24, 4.4);
+	}
+
+	function parseCssPixels(value, fallback) {
+		const parsed = Number.parseFloat(value);
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+	}
+
+	function getLyricCarouselTiming() {
+		return {
+			duration: LYRIC_CAROUSEL_DURATION,
+			easing: "cubic-bezier(.2, .82, .16, 1)",
+			fill: "both",
+		};
+	}
+
+	function trackLyricSlotAnimation(animation, ghost = null) {
+		state.lyricSlotAnimations.push(animation);
+		const cleanup = () => {
+			if (ghost) {
+				ghost.remove();
+				state.lyricCarouselGhosts = state.lyricCarouselGhosts.filter((node) => node !== ghost);
+			}
+			state.lyricSlotAnimations = state.lyricSlotAnimations.filter((item) => item !== animation);
+			if (!state.lyricSlotAnimations.length) {
+				dom.lyrics.classList.remove("is-lyric-carousel-running");
+			}
+		};
+		animation.addEventListener("finish", cleanup, { once: true });
+		animation.addEventListener("cancel", cleanup, { once: true });
+	}
+
+	function cancelLyricCarouselAnimations() {
+		for (const animation of state.lyricSlotAnimations.splice(0)) {
+			try {
+				animation.cancel();
+			} catch (error) {
+				// Ignore stale Web Animations handles.
+			}
+		}
+		for (const ghost of state.lyricCarouselGhosts.splice(0)) {
+			ghost.remove();
+		}
+		dom.lyrics.classList.remove("is-lyric-carousel-running");
+	}
+
+	function createInstrumentalIndicator() {
+		const indicator = document.createElement("div");
+		indicator.className = "novaplayer__instrumental";
+		indicator.setAttribute("aria-label", "Instrumental break");
+
+		const meter = document.createElement("span");
+		meter.className = "novaplayer__instrumental-meter";
+		for (let index = 0; index < 3; index += 1) {
+			const dot = document.createElement("span");
+			dot.className = "novaplayer__instrumental-dot";
+			meter.append(dot);
+		}
+
+		const label = document.createElement("strong");
+		label.textContent = "Instrumental";
+
+		indicator.append(meter, label);
+		return indicator;
+	}
+
+	function getInstrumentalBreakState(position, activeIndex) {
+		if (!state.hasSyncedLyrics || !state.lyrics.length || state.lyricsHidden || isBeforeFirstLyric()) {
+			return null;
+		}
+
+		const currentIndex = findRenderableLyricIndexAtOrBefore(activeIndex);
+		if (currentIndex < 0) {
+			return null;
+		}
+
+		const current = state.lyrics[currentIndex];
+		const wordBreak = findWordInstrumentalBreakAt(current, position);
+		if (wordBreak && !hasTimedVocalAtPosition(position, currentIndex, currentIndex + 1)) {
+			return {
+				key: `word:${currentIndex}:${wordBreak.wordIndex}:${wordBreak.nextWordIndex}:${Math.round(wordBreak.start)}:${Math.round(wordBreak.end)}`,
+				previous: current,
+				next: current,
+				previousText: wordBreak.previousText,
+				nextText: wordBreak.nextText,
+				start: wordBreak.start,
+				end: wordBreak.end,
+				previousIndex: currentIndex,
+				nextIndex: currentIndex,
+			};
+		}
+
+		const nextIndex = findNextRenderableLyricIndex(currentIndex + 1);
+		const next = nextIndex >= 0 ? state.lyrics[nextIndex] : null;
+		const breakInfo = getLineInstrumentalBreak(current, Number(next ? next.start : (state.durationMs || current.end || 0)));
+
+		if (!breakInfo) {
+			return null;
+		}
+
+		if (position < breakInfo.start || position >= breakInfo.end) {
+			return null;
+		}
+		if (hasTimedVocalAtPosition(position, currentIndex, nextIndex)) {
+			return null;
+		}
+
+		return {
+			key: `${currentIndex}:${nextIndex}:${Math.round(breakInfo.start)}:${Math.round(breakInfo.end)}`,
+			previous: current,
+			next,
+			start: breakInfo.start,
+			end: breakInfo.end,
+			previousIndex: currentIndex,
+			nextIndex,
+		};
+	}
+
+	function getLineInstrumentalBreak(line, breakEnd) {
+		const end = Number(breakEnd);
+		const breakStart = getInstrumentalBreakStart(line, end);
+		if (
+			!line ||
+			!Number.isFinite(end) ||
+			end <= line.start ||
+			end - line.start < INSTRUMENTAL_GAP_MIN_MS ||
+			end - breakStart < INSTRUMENTAL_MIN_VISIBLE_MS
+		) {
+			return null;
+		}
+
+		return { start: breakStart, end };
+	}
+
+	function getWordInstrumentalBreaks(line) {
+		if (!line?.words?.length || line.estimatedWords) {
+			return [];
+		}
+
+		const orderedWords = line.words
+			.map((word, index) => ({
+				...word,
+				index,
+				start: Number(word.start),
+				end: Number(word.end),
+			}))
+			.filter((word) => Number.isFinite(word.start) && Number.isFinite(word.end))
+			.sort((a, b) => a.start - b.start);
+		const breaks = [];
+
+		for (let index = 0; index < orderedWords.length - 1; index += 1) {
+			const current = orderedWords[index];
+			const next = orderedWords[index + 1];
+			const gap = next.start - current.end;
+			if (gap < INSTRUMENTAL_WORD_GAP_MIN_MS) {
+				continue;
+			}
+
+			const start = Math.min(next.start - 120, current.end + 140);
+			const end = next.start;
+			if (end - start < INSTRUMENTAL_MIN_VISIBLE_MS) {
+				continue;
+			}
+
+			breaks.push({
+				start,
+				end,
+				wordIndex: current.index,
+				nextWordIndex: next.index,
+				previousText: getLyricTextSegment(line.text, 0, current.index + 1),
+				nextText: getLyricTextSegment(line.text, next.index, Infinity),
+			});
+		}
+
+		return breaks;
+	}
+
+	function findWordInstrumentalBreakAt(line, position) {
+		if (!line?.instrumentalBreaks?.length) {
+			return null;
+		}
+
+		return line.instrumentalBreaks.find((breakInfo) => position >= breakInfo.start && position < breakInfo.end) || null;
+	}
+
+	function getLyricTextSegment(text, fromWordIndex, toWordIndex) {
+		let output = "";
+		let wordIndex = 0;
+		for (const token of tokenizeLyricText(text)) {
+			if (token.space) {
+				if (output && wordIndex > fromWordIndex && wordIndex < toWordIndex) {
+					output += token.text;
+				}
+				continue;
+			}
+
+			if (wordIndex >= fromWordIndex && wordIndex < toWordIndex) {
+				output += token.text;
+			}
+			wordIndex += 1;
+		}
+		return cleanLyricLine(output);
+	}
+
+	function findRenderableLyricIndexAtOrBefore(startIndex) {
+		const from = clamp(Number(startIndex) || 0, 0, Math.max(0, state.lyrics.length - 1));
+		for (let index = from; index >= 0; index -= 1) {
+			if (isPrimaryLyricLine(state.lyrics[index])) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	function findNextRenderableLyricIndex(startIndex) {
+		for (let index = Math.max(0, startIndex); index < state.lyrics.length; index += 1) {
+			if (isPrimaryLyricLine(state.lyrics[index])) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	function hasTimedVocalAtPosition(position, currentIndex, nextIndex) {
+		const lastIndex = nextIndex >= 0 ? nextIndex - 1 : state.lyrics.length - 1;
+		for (let index = currentIndex; index <= lastIndex; index += 1) {
+			const line = state.lyrics[index];
+			if (!line) {
+				continue;
+			}
+
+			if (
+				index !== currentIndex &&
+				line.role === "back" &&
+				isRenderableLyricText(line.text) &&
+				isTimeInRange(position, line.start, line.end)
+			) {
+				return true;
+			}
+
+			for (const backVocal of line.backVocals || []) {
+				if (isRenderableLyricText(backVocal.text) && isTimeInRange(position, backVocal.start, backVocal.end)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	function isTimeInRange(position, start, end) {
+		const from = Number(start);
+		const to = Number(end);
+		return Number.isFinite(from) && Number.isFinite(to) && position >= from - 80 && position <= to;
+	}
+
+	function isPrimaryLyricLine(line) {
+		return Boolean(line && line.role !== "back" && isRenderableLyricText(line.text));
+	}
+
+	function getInstrumentalBreakStart(line, breakEnd) {
+		const lineStart = Number(line?.start) || 0;
+		const concreteWordEnd = getConcreteWordEnd(line);
+		const lyricHoldEnd = concreteWordEnd
+			? Math.max(concreteWordEnd + 260, lineStart + 1100)
+			: lineStart + estimateLyricHoldMs(line?.text);
+
+		return Math.min(breakEnd - INSTRUMENTAL_LEAD_MS, Math.max(lineStart + 1200, lyricHoldEnd));
+	}
+
+	function getConcreteWordEnd(line) {
+		if (line?.estimatedWords || !Array.isArray(line?.words) || !line.words.length) {
+			return 0;
+		}
+
+		return line.words.reduce((maxEnd, word) => {
+			const end = Number(word?.end);
+			return Number.isFinite(end) ? Math.max(maxEnd, end) : maxEnd;
+		}, 0);
+	}
+
+	function estimateLyricHoldMs(text) {
+		const wordCount = tokenizeLyricText(text)
+			.filter((token) => !token.space && token.text)
+			.length || 1;
+		return clamp(1000 + wordCount * 310, 1900, 5200);
 	}
 
 	function findDisplayLyricIndex(startIndex) {
@@ -2002,7 +2820,7 @@
 	}
 
 	function showTimedBackVocals(position, activeIndex = state.activeLine) {
-		if (!state.lyrics.length || state.lyricsHidden || isBeforeFirstLyric()) {
+		if (!state.lyrics.length || state.lyricsHidden || isBeforeFirstLyric() || getBackVocalEffect() === "none") {
 			return;
 		}
 
@@ -2028,6 +2846,11 @@
 	}
 
 	function showBackVocal(line, suffix = "") {
+		const effect = getBackVocalEffect();
+		if (effect === "none") {
+			return;
+		}
+
 		const text = cleanLyricLine(line?.text || "");
 		if (!isRenderableLyricText(text)) {
 			return;
@@ -2050,6 +2873,8 @@
 
 		const node = document.createElement("div");
 		node.className = "novaplayer__back-vocal";
+		node.dataset.effect = effect;
+		node.dataset.text = text;
 		node.textContent = text;
 		node.style.setProperty("--novaplayer-back-x", `${x.toFixed(2)}vw`);
 		node.style.setProperty("--novaplayer-back-y", `${y.toFixed(2)}vh`);
@@ -2058,8 +2883,16 @@
 		node.style.setProperty("--novaplayer-back-tilt-x", `${lerp(-8, 8, seededRandom(`${seedBase}:tx`)).toFixed(2)}deg`);
 		node.style.setProperty("--novaplayer-back-tilt-y", `${lerp(-18, 18, seededRandom(`${seedBase}:ty`)).toFixed(2)}deg`);
 		node.style.setProperty("--novaplayer-back-tilt-z", `${lerp(-8, 8, seededRandom(`${seedBase}:tz`)).toFixed(2)}deg`);
+		node.style.setProperty("--novaplayer-back-spin-z", `${lerp(-24, 24, seededRandom(`${seedBase}:spin`)).toFixed(2)}deg`);
+		node.style.setProperty("--novaplayer-back-sweep-x", `${lerp(-54, 54, seededRandom(`${seedBase}:sx`)).toFixed(2)}px`);
+		node.style.setProperty("--novaplayer-back-sweep-y", `${lerp(-30, 30, seededRandom(`${seedBase}:sy`)).toFixed(2)}px`);
 		dom.backs.append(node);
 		node.addEventListener("animationend", () => node.remove(), { once: true });
+	}
+
+	function clearBackVocals() {
+		state.backVocalKeys = new Set();
+		dom.backs.replaceChildren();
 	}
 
 	function renderCurrentLyric(line) {
@@ -2085,6 +2918,7 @@
 			span.className = "novaplayer__lyric-word";
 			span.textContent = token.text;
 			span.dataset.wordIndex = String(wordIndex);
+			span.dataset.wordText = token.text;
 			const timing = line.words[wordIndex];
 			if (timing) {
 				span.dataset.wordStart = String(Math.round(timing.start));
@@ -2171,7 +3005,42 @@
 					? clamp((state.progressMs - start + 30) / (end - start), 0, 1)
 					: 1;
 			}
-			word.style.setProperty("--novaplayer-word-progress", `${(-18 + progress * 138).toFixed(2)}%`);
+			word.style.setProperty("--novaplayer-word-progress", `${(-4 + progress * 108).toFixed(2)}%`);
+		}
+		syncLyricWordFlowGhostsFromCurrent();
+	}
+
+	function syncLyricWordFlowGhostsFromCurrent() {
+		if (!state.lyricCarouselGhosts.length || !dom.lyricCurrent.children.length) {
+			return;
+		}
+
+		const currentWords = new Map();
+		for (const word of dom.lyricCurrent.children) {
+			if (word.classList?.contains("novaplayer__lyric-word")) {
+				currentWords.set(word.dataset.wordIndex, word);
+			}
+		}
+		if (!currentWords.size) {
+			return;
+		}
+
+		for (const ghost of state.lyricCarouselGhosts) {
+			if (!ghost.isConnected || ghost.dataset.wordFlowSource !== "current") {
+				continue;
+			}
+			for (const ghostWord of ghost.querySelectorAll(".novaplayer__lyric-word")) {
+				const sourceWord = currentWords.get(ghostWord.dataset.wordIndex);
+				if (!sourceWord) {
+					continue;
+				}
+				ghostWord.classList.toggle("is-sung", sourceWord.classList.contains("is-sung"));
+				ghostWord.classList.toggle("is-current", sourceWord.classList.contains("is-current"));
+				ghostWord.style.setProperty(
+					"--novaplayer-word-progress",
+					sourceWord.style.getPropertyValue("--novaplayer-word-progress") || "0%"
+				);
+			}
 		}
 	}
 
@@ -2252,26 +3121,41 @@
 		}
 
 		const start = line.start;
-		const duration = Math.max(700, (line.end || start + 2600) - start);
+		const end = getLyricWordTimingEnd(line);
+		const duration = Math.max(700, end - start);
 		const totalWeight = words.reduce((sum, word) => sum + Math.max(0.85, Math.sqrt(word.text.length)), 0);
 		let cursor = start;
 
 		return words.map((word, index) => {
 			const weight = Math.max(0.85, Math.sqrt(word.text.length));
-			const wordDuration = index === words.length - 1 ? Math.max(90, line.end - cursor) : Math.max(90, duration * (weight / totalWeight));
+			const wordDuration = index === words.length - 1 ? Math.max(90, end - cursor) : Math.max(90, duration * (weight / totalWeight));
 			const result = {
 				text: word.text,
 				start: cursor,
-				end: Math.min(line.end, cursor + wordDuration),
+				end: Math.min(end, cursor + wordDuration),
 			};
 			cursor += wordDuration;
 			return result;
 		});
 	}
 
+	function getLyricWordTimingEnd(line) {
+		const start = Number(line?.start) || 0;
+		const fallbackEnd = Number(line?.end) || start + 2600;
+		const instrumentalStart = Number(line?.instrumentalStart) || 0;
+		if (instrumentalStart > start + 700 && instrumentalStart < fallbackEnd) {
+			return instrumentalStart;
+		}
+		return fallbackEnd;
+	}
+
 	function getActiveWordIndex(line, progressMs) {
 		if (!line?.words?.length) {
 			return -1;
+		}
+
+		if (progressMs >= getLyricWordTimingEnd(line) + 80) {
+			return line.words.length;
 		}
 
 		for (let index = 0; index < line.words.length; index += 1) {
@@ -2280,6 +3164,10 @@
 				return index;
 			}
 			if (progressMs < word.start) {
+				const previous = index > 0 ? line.words[index - 1] : null;
+				if (previous && progressMs >= previous.end + 80) {
+					return index - 0.5;
+				}
 				return Math.max(0, index - 1);
 			}
 		}
@@ -2372,6 +3260,7 @@
 	}
 
 	function renderQueue(playerData = Spicetify.Player.data) {
+		const itemLimit = getQueueVisibleLimit();
 		const candidates = [
 			...(Array.isArray(Spicetify.Queue?.nextTracks) ? Spicetify.Queue.nextTracks : []),
 			...(Array.isArray(playerData?.nextItems) ? playerData.nextItems : []),
@@ -2387,14 +3276,14 @@
 			}
 			seen.add(track.uri);
 			tracks.push(track);
-			if (tracks.length >= MAX_QUEUE_ITEMS) {
+			if (tracks.length >= itemLimit) {
 				break;
 			}
 		}
 
 		dom.queueCount.textContent = String(tracks.length);
 		state.queueLength = tracks.length;
-		state.queueOffset = clamp(state.queueOffset, 0, Math.max(0, tracks.length - 1));
+		state.queueOffset = clamp(state.queueOffset, 0, getMaxQueueOffset());
 		state.queueWheelRemainder = 0;
 		dom.queueList.replaceChildren(...tracks.map((track, index) => createQueueItem(track, index)));
 		updateQueueCarouselLayout();
@@ -2444,7 +3333,7 @@
 	}
 
 	function setQueueOffset(nextOffset) {
-		const next = clamp(nextOffset, 0, Math.max(0, state.queueLength - 1));
+		const next = clamp(nextOffset, 0, getMaxQueueOffset());
 		if (next === state.queueOffset) {
 			return;
 		}
@@ -2462,7 +3351,7 @@
 		for (const item of items) {
 			const index = Number(item.dataset.queueIndex || 0);
 			const relative = index - state.queueOffset;
-			const visible = relative >= 0 && relative < 8;
+			const visible = relative >= 0 && relative < getQueueVisibleLimit();
 			const isFront = relative === 0;
 			const opacity = visible ? (isFront ? 1 : Math.max(0.52, 0.9 - relative * 0.075)) : 0;
 
@@ -2478,6 +3367,15 @@
 			item.style.setProperty("--novaplayer-depth-blur", "0px");
 			item.style.zIndex = String(100 - Math.max(0, relative));
 		}
+	}
+
+	function getQueueVisibleLimit() {
+		const def = SETTING_DEFS.queueVisibleCount;
+		return Math.round(clamp(Number(state.settings.queueVisibleCount) || 16, def.min, def.max));
+	}
+
+	function getMaxQueueOffset() {
+		return Math.max(0, state.queueLength - getQueueVisibleLimit());
 	}
 
 	function updateProgress() {
@@ -2510,21 +3408,74 @@
 		updateActiveLyric();
 	}
 
+	function handleVolumeInput(event) {
+		const volume = clamp(Number(event.currentTarget.value), 0, 1);
+		setPlayerVolume(volume);
+		updateVolumeUi(volume);
+	}
+
+	function handleHeartClick() {
+		const nextHeart = !getHeartSafe();
+		setHeartButtonState(nextHeart);
+
+		try {
+			let result;
+			if (typeof Spicetify.Player.setHeart === "function") {
+				result = Spicetify.Player.setHeart(nextHeart);
+			} else if (typeof Spicetify.Player.toggleHeart === "function") {
+				result = Spicetify.Player.toggleHeart();
+			} else {
+				throw new Error("Spicetify heart controls are unavailable");
+			}
+
+			Promise.resolve(result).catch(() => {
+				updateControlState();
+			});
+		} catch (error) {
+			updateControlState();
+			return;
+		}
+
+		setTimeout(updateControlState, 150);
+		setTimeout(updateControlState, 700);
+	}
+
 	function updateControlState() {
 		state.isPaused = !Spicetify.Player.isPlaying?.();
 		state.shuffle = getShuffleSafe();
 		state.repeat = getRepeatSafe();
 		state.heart = getHeartSafe();
+		updateVolumeUi(getVolumeSafe());
 
 		buttons.play.innerHTML = svgIcon(state.isPaused ? "play" : "pause", 24);
-		buttons.heart.innerHTML = svgIcon(state.heart ? "heart-active" : "heart", 18);
 		buttons.repeat.innerHTML = svgIcon(state.repeat === 2 ? "repeat-once" : "repeat", 18);
 
 		buttons.shuffle.classList.toggle("is-active", state.shuffle);
 		buttons.repeat.classList.toggle("is-active", state.repeat > 0);
-		buttons.heart.classList.toggle("is-active", state.heart);
+		setHeartButtonState(state.heart);
 		buttons.play.classList.toggle("is-playing", !state.isPaused);
 		root.classList.toggle("is-playing", !state.isPaused);
+	}
+
+	function setHeartButtonState(isActive) {
+		state.heart = Boolean(isActive);
+		buttons.heart.innerHTML = svgIcon(state.heart ? "heart-active" : "heart", 18);
+		buttons.heart.classList.toggle("is-active", state.heart);
+		buttons.heart.setAttribute("aria-label", state.heart ? "Remove saved track" : "Save track");
+		buttons.heart.title = state.heart ? "Remove saved track" : "Save track";
+	}
+
+	function updateVolumeUi(volume) {
+		const nextVolume = clamp(Number(volume), 0, 1);
+		state.volume = nextVolume;
+		if (dom.volumeSlider && document.activeElement !== dom.volumeSlider) {
+			dom.volumeSlider.value = nextVolume.toFixed(2);
+		}
+		setStyleProperty(dom.volumeSlider, "--novaplayer-volume", `${(nextVolume * 100).toFixed(1)}%`);
+		if (dom.volumeIcon) {
+			const icon = nextVolume <= 0.01 ? "volume-off" : nextVolume < 0.46 ? "volume-one-wave" : "volume-two-wave";
+			dom.volumeIcon.innerHTML = svgIcon(icon, 16);
+		}
 	}
 
 	function updateButtonActiveState() {
@@ -2654,6 +3605,53 @@
 		}
 	}
 
+	function getVolumeSafe() {
+		try {
+			const value = Spicetify.Player.getVolume?.();
+			const normalized = normalizeVolumeValue(value);
+			if (Number.isFinite(normalized)) {
+				return normalized;
+			}
+		} catch (error) {
+			// Fall back to the last slider value when Spotify does not expose volume.
+		}
+
+		return state.volume;
+	}
+
+	function setPlayerVolume(volume) {
+		const nextVolume = clamp(Number(volume), 0, 1);
+		try {
+			if (typeof Spicetify.Player.setVolume === "function") {
+				const currentRaw = Number(Spicetify.Player.getVolume?.());
+				Spicetify.Player.setVolume(Number.isFinite(currentRaw) && currentRaw > 1 ? Math.round(nextVolume * 100) : nextVolume);
+				return;
+			}
+		} catch (error) {
+			// Fall through to step-based volume control.
+		}
+
+		const current = getVolumeSafe();
+		const method = nextVolume > current ? Spicetify.Player.increaseVolume : Spicetify.Player.decreaseVolume;
+		if (typeof method !== "function") {
+			return;
+		}
+
+		const steps = Math.min(10, Math.ceil(Math.abs(nextVolume - current) / 0.1));
+		for (let index = 0; index < steps; index += 1) {
+			method.call(Spicetify.Player);
+		}
+	}
+
+	function normalizeVolumeValue(value) {
+		const numeric = Number(value);
+		if (!Number.isFinite(numeric)) {
+			return Number.NaN;
+		}
+
+		return clamp(numeric > 1 ? numeric / 100 : numeric, 0, 1);
+	}
+
 	function formatTime(ms) {
 		if (Spicetify.Player.formatTime) {
 			return Spicetify.Player.formatTime(ms || 0);
@@ -2685,6 +3683,19 @@
 		return `url("${normalizeCoverUrl(url || fallbackCover).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}")`;
 	}
 
+	function normalizeStringSetting(key, value) {
+		if (key === "backVocalEffect") {
+			const nextValue = String(value || "");
+			return BACK_VOCAL_EFFECTS.some((option) => option.value === nextValue) ? nextValue : DEFAULT_SETTINGS.backVocalEffect;
+		}
+
+		return String(value ?? DEFAULT_SETTINGS[key]);
+	}
+
+	function getBackVocalEffect() {
+		return normalizeStringSetting("backVocalEffect", state.settings.backVocalEffect);
+	}
+
 	function loadSettings() {
 		let parsed = {};
 		try {
@@ -2699,6 +3710,10 @@
 			}
 			if (typeof DEFAULT_SETTINGS[key] === "boolean") {
 				settings[key] = Boolean(value);
+				continue;
+			}
+			if (typeof DEFAULT_SETTINGS[key] === "string") {
+				settings[key] = normalizeStringSetting(key, value);
 				continue;
 			}
 			const def = SETTING_DEFS[key];
@@ -2720,6 +3735,34 @@
 					<small data-setting-output="${key}">${formatSettingValue(key, value)}</small>
 				</span>
 				<input type="range" min="${def.min}" max="${def.max}" step="${def.step}" value="${value}" data-setting="${key}">
+			</label>
+		`;
+	}
+
+	function settingsToggle(key, label, description) {
+		return `
+			<label class="novaplayer__setting-row novaplayer__setting-row--toggle">
+				<span>
+					<strong>${label}</strong>
+					<small>${description}</small>
+				</span>
+				<input type="checkbox" data-setting="${key}" ${state.settings[key] ? "checked" : ""}>
+			</label>
+		`;
+	}
+
+	function settingsSelect(key, label, description, options) {
+		const value = state.settings[key];
+		const items = options
+			.map((option) => `<option value="${option.value}" ${option.value === value ? "selected" : ""}>${option.label}</option>`)
+			.join("");
+		return `
+			<label class="novaplayer__setting-row">
+				<span>
+					<strong>${label}</strong>
+					<small>${description}</small>
+				</span>
+				<select data-setting="${key}">${items}</select>
 			</label>
 		`;
 	}
@@ -2826,18 +3869,47 @@
 	}
 
 	function applyPaletteRaw(palette) {
-		root.style.setProperty("--novaplayer-hot", rgbCss(palette.hot));
-		root.style.setProperty("--novaplayer-hot-rgb", rgbVar(palette.hot));
-		root.style.setProperty("--novaplayer-cyan", rgbCss(palette.cyan));
-		root.style.setProperty("--novaplayer-cyan-rgb", rgbVar(palette.cyan));
-		root.style.setProperty("--novaplayer-lime", rgbCss(palette.lime));
-		root.style.setProperty("--novaplayer-lime-rgb", rgbVar(palette.lime));
-		root.style.setProperty("--novaplayer-bg-1", rgbCss(palette.bg1));
-		root.style.setProperty("--novaplayer-bg-1-rgb", rgbVar(palette.bg1));
-		root.style.setProperty("--novaplayer-bg-2", rgbCss(palette.bg2));
-		root.style.setProperty("--novaplayer-bg-2-rgb", rgbVar(palette.bg2));
-		root.style.setProperty("--novaplayer-bg-3", rgbCss(palette.bg3));
-		root.style.setProperty("--novaplayer-bg-3-rgb", rgbVar(palette.bg3));
+		const display = getDisplayPaletteRaw(palette);
+		root.style.setProperty("--novaplayer-hot", rgbCss(display.hot));
+		root.style.setProperty("--novaplayer-hot-rgb", rgbVar(display.hot));
+		root.style.setProperty("--novaplayer-cyan", rgbCss(display.cyan));
+		root.style.setProperty("--novaplayer-cyan-rgb", rgbVar(display.cyan));
+		root.style.setProperty("--novaplayer-lime", rgbCss(display.lime));
+		root.style.setProperty("--novaplayer-lime-rgb", rgbVar(display.lime));
+		root.style.setProperty("--novaplayer-bg-1", rgbCss(display.bg1));
+		root.style.setProperty("--novaplayer-bg-1-rgb", rgbVar(display.bg1));
+		root.style.setProperty("--novaplayer-bg-2", rgbCss(display.bg2));
+		root.style.setProperty("--novaplayer-bg-2-rgb", rgbVar(display.bg2));
+		root.style.setProperty("--novaplayer-bg-3", rgbCss(display.bg3));
+		root.style.setProperty("--novaplayer-bg-3-rgb", rgbVar(display.bg3));
+	}
+
+	function getDisplayPaletteRaw(palette) {
+		if (!state.settings.invertAccents) {
+			return palette;
+		}
+
+		return {
+			...palette,
+			hot: invertRgb(palette.hot),
+			cyan: invertRgb(palette.cyan),
+			lime: invertRgb(palette.lime),
+		};
+	}
+
+	function invertRgb(rgb) {
+		return {
+			r: 1 - (Number(rgb?.r) || 0),
+			g: 1 - (Number(rgb?.g) || 0),
+			b: 1 - (Number(rgb?.b) || 0),
+		};
+	}
+
+	function refreshAccentPalette() {
+		const palette = state.paletteRaw || readCurrentPaletteRaw();
+		if (palette) {
+			applyPaletteRaw(palette);
+		}
 	}
 
 	function updateCosmosTexture(palette) {
@@ -2858,40 +3930,26 @@
 			return;
 		}
 
-		const image = createCosmosTexture(palette, signature);
-		if (!image) {
+		const texture = createCosmosTexture(palette, signature);
+		if (!texture) {
 			return;
 		}
 
-		const cssImage = `url("${image}")`;
-		const previous = dom.cosmos.style.getPropertyValue("--novaplayer-cosmos-current") || cssImage;
+		const duration = state.cosmosReady ? PALETTE_TRANSITION_DURATION : 0;
 		state.cosmosSignature = signature;
 
-		if (!state.cosmosReady) {
-			setStyleProperty(dom.cosmos, "--novaplayer-cosmos-current", cssImage);
-			setStyleProperty(dom.cosmos, "--novaplayer-cosmos-current-opacity", "1");
-			setStyleProperty(dom.cosmos, "--novaplayer-cosmos-prev-opacity", "0");
-			state.cosmosReady = true;
-			return;
-		}
+		cosmosRenderer.setTexture?.(texture, duration);
+		cosmosRenderer.render?.(performance.now());
+		state.cosmosReady = true;
+	}
 
-		if (state.cosmosSwapTimer) {
-			clearTimeout(state.cosmosSwapTimer);
-			state.cosmosSwapTimer = 0;
+	function cancelPendingPaletteWork() {
+		state.paletteApplyToken += 1;
+		clearScheduledPalette();
+		if (state.paletteFrame) {
+			cancelAnimationFrame(state.paletteFrame);
+			state.paletteFrame = 0;
 		}
-
-		setStyleProperty(dom.cosmos, "--novaplayer-cosmos-prev", previous);
-		setStyleProperty(dom.cosmos, "--novaplayer-cosmos-current", cssImage);
-		setStyleProperty(dom.cosmos, "--novaplayer-cosmos-prev-opacity", "1");
-		setStyleProperty(dom.cosmos, "--novaplayer-cosmos-current-opacity", "0");
-		requestAnimationFrame(() => {
-			setStyleProperty(dom.cosmos, "--novaplayer-cosmos-prev-opacity", "0");
-			setStyleProperty(dom.cosmos, "--novaplayer-cosmos-current-opacity", "1");
-		});
-		state.cosmosSwapTimer = setTimeout(() => {
-			setStyleProperty(dom.cosmos, "--novaplayer-cosmos-prev", "none");
-			state.cosmosSwapTimer = 0;
-		}, PALETTE_TRANSITION_DURATION + 120);
 	}
 
 	function createCosmosTexture(palette, seedKey) {
@@ -3043,7 +4101,407 @@
 		ctx.fillStyle = vignette;
 		ctx.fillRect(0, 0, width, height);
 
-		return canvas.toDataURL("image/png");
+		return canvas;
+	}
+
+	function createCosmosTextureRenderer(canvas) {
+		if (!canvas) {
+			return {
+				setTexture() {},
+				setFlow() {},
+				render() {},
+				pause() {},
+				getStats() {
+					return { mode: "none", ready: false };
+				},
+			};
+		}
+
+		const gl =
+			canvas.getContext("webgl", {
+				alpha: true,
+				antialias: false,
+				depth: false,
+				preserveDrawingBuffer: false,
+				powerPreference: "high-performance",
+			}) || canvas.getContext("experimental-webgl");
+
+		if (!gl) {
+			return createCosmosCanvasFallback(canvas);
+		}
+
+		const vertexSource = `
+attribute vec2 a_position;
+attribute vec2 a_uv;
+uniform vec2 u_translate;
+uniform float u_rotation;
+uniform float u_scale;
+varying vec2 v_uv;
+
+void main() {
+	vec2 position = a_position * u_scale;
+	float c = cos(u_rotation);
+	float s = sin(u_rotation);
+	position = vec2(position.x * c - position.y * s, position.x * s + position.y * c);
+	position += u_translate;
+	gl_Position = vec4(position, 0.0, 1.0);
+	v_uv = a_uv;
+}
+`;
+		const fragmentSource = `
+precision mediump float;
+uniform sampler2D u_texture;
+uniform float u_opacity;
+varying vec2 v_uv;
+
+vec3 saturateColor(vec3 color, float amount) {
+	float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+	return mix(vec3(luma), color, amount);
+}
+
+void main() {
+	vec4 color = texture2D(u_texture, v_uv);
+	color.rgb = saturateColor(color.rgb, 1.05);
+	color.rgb = (color.rgb - 0.5) * 1.10 + 0.5;
+	color.rgb *= 1.02;
+	gl_FragColor = vec4(max(color.rgb, vec3(0.0)), color.a * u_opacity);
+}
+`;
+		const program = createProgram(gl, vertexSource, fragmentSource);
+		if (!program) {
+			return createCosmosCanvasFallback(canvas);
+		}
+
+		const positionBuffer = gl.createBuffer();
+		const uvBuffer = gl.createBuffer();
+		const positions = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+		const uvs = new Float32Array([0, 1, 1, 1, 0, 0, 1, 0]);
+		gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+		gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.STATIC_DRAW);
+
+		const renderer = {
+			current: null,
+			previous: null,
+			transitionStart: 0,
+			transitionDuration: 0,
+			flow: {
+				shiftX: 0,
+				shiftY: 0,
+				starOpacity: 1,
+			},
+			viewport: {
+				width: 1,
+				height: 1,
+				cssWidth: 1,
+				cssHeight: 1,
+			},
+			viewportDirty: true,
+			resizeObserver: null,
+			stats: {
+				mode: "webgl",
+				ready: false,
+				canvas: { width: 0, height: 0 },
+				texture: { width: 0, height: 0 },
+				transition: 1,
+				renderMs: 0,
+			},
+		};
+
+		const locations = {
+			position: gl.getAttribLocation(program, "a_position"),
+			uv: gl.getAttribLocation(program, "a_uv"),
+			texture: gl.getUniformLocation(program, "u_texture"),
+			opacity: gl.getUniformLocation(program, "u_opacity"),
+			translate: gl.getUniformLocation(program, "u_translate"),
+			rotation: gl.getUniformLocation(program, "u_rotation"),
+			scale: gl.getUniformLocation(program, "u_scale"),
+		};
+
+		gl.enable(gl.BLEND);
+		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+		const uploadTexture = (source) => {
+			const texture = gl.createTexture();
+			gl.bindTexture(gl.TEXTURE_2D, texture);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+			return { texture, width: source.width, height: source.height };
+		};
+
+		const deleteTexture = (textureInfo) => {
+			if (textureInfo?.texture) {
+				gl.deleteTexture(textureInfo.texture);
+			}
+		};
+
+		const setViewportSize = (cssWidth, cssHeight) => {
+			const safeCssWidth = Math.max(1, Number(cssWidth) || 1);
+			const safeCssHeight = Math.max(1, Number(cssHeight) || 1);
+			const dpr = Math.min(window.devicePixelRatio || 1, 1);
+			const rawWidth = Math.max(1, Math.floor(safeCssWidth * dpr));
+			const rawHeight = Math.max(1, Math.floor(safeCssHeight * dpr));
+			const capScale = Math.min(1, COSMOS_TEXTURE_WIDTH / rawWidth, COSMOS_TEXTURE_HEIGHT / rawHeight);
+			const width = Math.max(1, Math.floor(rawWidth * capScale));
+			const height = Math.max(1, Math.floor(rawHeight * capScale));
+			const current = renderer.viewport;
+			if (
+				current.width === width &&
+				current.height === height &&
+				Math.abs(current.cssWidth - safeCssWidth) < 0.1 &&
+				Math.abs(current.cssHeight - safeCssHeight) < 0.1
+			) {
+				return;
+			}
+
+			renderer.viewport = {
+				width,
+				height,
+				cssWidth: safeCssWidth,
+				cssHeight: safeCssHeight,
+			};
+			renderer.viewportDirty = true;
+			renderer.stats.canvas = {
+				width,
+				height,
+				cssWidth: round(safeCssWidth),
+				cssHeight: round(safeCssHeight),
+			};
+		};
+
+		const measureViewport = () => {
+			const rect = canvas.getBoundingClientRect();
+			setViewportSize(rect.width, rect.height);
+		};
+
+		const installResizeObserver = () => {
+			if (typeof ResizeObserver === "function") {
+				renderer.resizeObserver = new ResizeObserver((entries) => {
+					const entry = entries[0];
+					if (entry?.contentRect) {
+						setViewportSize(entry.contentRect.width, entry.contentRect.height);
+					}
+				});
+				renderer.resizeObserver.observe(canvas);
+			} else {
+				window.addEventListener("resize", measureViewport, { passive: true });
+			}
+			measureViewport();
+		};
+
+		const getViewportSize = () => {
+			const viewport = renderer.viewport;
+			if (!viewport.width || !viewport.height) {
+				measureViewport();
+			}
+			return renderer.viewport;
+		};
+
+		const resize = () => {
+			const viewport = getViewportSize();
+			if (canvas.width !== viewport.width || canvas.height !== viewport.height) {
+				canvas.width = viewport.width;
+				canvas.height = viewport.height;
+				renderer.viewportDirty = true;
+			}
+			if (renderer.viewportDirty) {
+				gl.viewport(0, 0, viewport.width, viewport.height);
+				renderer.viewportDirty = false;
+			}
+			renderer.stats.canvas = {
+				width: viewport.width,
+				height: viewport.height,
+				cssWidth: round(viewport.cssWidth),
+				cssHeight: round(viewport.cssHeight),
+			};
+			return viewport;
+		};
+
+		installResizeObserver();
+
+		const bindQuad = () => {
+			gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+			gl.enableVertexAttribArray(locations.position);
+			gl.vertexAttribPointer(locations.position, 2, gl.FLOAT, false, 0, 0);
+			gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
+			gl.enableVertexAttribArray(locations.uv);
+			gl.vertexAttribPointer(locations.uv, 2, gl.FLOAT, false, 0, 0);
+		};
+
+		const drawLayer = (textureInfo, opacity, rotation, scale, viewport) => {
+			if (!textureInfo || opacity <= 0.001) {
+				return;
+			}
+
+			const translateX = viewport.cssWidth ? (renderer.flow.shiftX * 2) / viewport.cssWidth : 0;
+			const translateY = viewport.cssHeight ? (-renderer.flow.shiftY * 2) / viewport.cssHeight : 0;
+			gl.activeTexture(gl.TEXTURE0);
+			gl.bindTexture(gl.TEXTURE_2D, textureInfo.texture);
+			gl.uniform1i(locations.texture, 0);
+			gl.uniform1f(locations.opacity, opacity);
+			gl.uniform2f(locations.translate, translateX, translateY);
+			gl.uniform1f(locations.rotation, rotation);
+			gl.uniform1f(locations.scale, scale);
+			gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+		};
+
+		return {
+			setTexture(source, duration = 0) {
+				const next = uploadTexture(source);
+				if (renderer.previous && renderer.previous !== renderer.current) {
+					deleteTexture(renderer.previous);
+				}
+				renderer.previous = renderer.current;
+				renderer.current = next;
+				renderer.transitionStart = performance.now();
+				renderer.transitionDuration = Math.max(0, Number(duration) || 0);
+				renderer.stats.ready = true;
+				renderer.stats.texture = { width: next.width, height: next.height };
+			},
+			setFlow(flow) {
+				Object.assign(renderer.flow, flow || {});
+			},
+			resize() {
+				measureViewport();
+				resize();
+			},
+			render(time = performance.now()) {
+				if (!renderer.current) {
+					return renderer.stats;
+				}
+
+				const start = performance.now();
+				const viewport = resize();
+				const progress = renderer.transitionDuration
+					? clamp((time - renderer.transitionStart) / renderer.transitionDuration, 0, 1)
+					: 1;
+				const eased = easeInOutCubic(progress);
+				const starOpacity = clamp(Number(renderer.flow.starOpacity) || 0, 0, 1.6);
+
+				gl.clearColor(0, 0, 0, 0);
+				gl.clear(gl.COLOR_BUFFER_BIT);
+				gl.useProgram(program);
+				bindQuad();
+				drawLayer(renderer.previous, (1 - eased) * starOpacity, -0.006981317, 1.055, viewport);
+				drawLayer(renderer.current, starOpacity * (renderer.previous ? eased : 1), 0.009599311, 1.05, viewport);
+
+				if (progress >= 1 && renderer.previous) {
+					deleteTexture(renderer.previous);
+					renderer.previous = null;
+				}
+
+				renderer.stats.transition = round(eased, 3);
+				renderer.stats.renderMs = round(performance.now() - start, 3);
+				return renderer.stats;
+			},
+			pause() {
+				if (!renderer.current) {
+					return;
+				}
+				this.setFlow({ shiftX: 0, shiftY: 0 });
+				this.render(performance.now());
+			},
+			getStats() {
+				return { ...renderer.stats };
+			},
+		};
+	}
+
+	function createCosmosCanvasFallback(canvas) {
+		const ctx = canvas.getContext("2d", { alpha: true });
+		const renderer = {
+			current: null,
+			viewport: {
+				width: 1,
+				height: 1,
+				cssWidth: 1,
+				cssHeight: 1,
+			},
+			resizeObserver: null,
+			stats: {
+				mode: "2d",
+				ready: false,
+				canvas: { width: 0, height: 0 },
+				texture: { width: 0, height: 0 },
+				transition: 1,
+				renderMs: 0,
+			},
+		};
+
+		const setViewportSize = (cssWidth, cssHeight) => {
+			const safeCssWidth = Math.max(1, Number(cssWidth) || 1);
+			const safeCssHeight = Math.max(1, Number(cssHeight) || 1);
+			const dpr = Math.min(window.devicePixelRatio || 1, 1);
+			const rawWidth = Math.max(1, Math.floor(safeCssWidth * dpr));
+			const rawHeight = Math.max(1, Math.floor(safeCssHeight * dpr));
+			const capScale = Math.min(1, COSMOS_TEXTURE_WIDTH / rawWidth, COSMOS_TEXTURE_HEIGHT / rawHeight);
+			const width = Math.max(1, Math.floor(rawWidth * capScale));
+			const height = Math.max(1, Math.floor(rawHeight * capScale));
+			renderer.viewport = { width, height, cssWidth: safeCssWidth, cssHeight: safeCssHeight };
+			renderer.stats.canvas = { width, height, cssWidth: round(safeCssWidth), cssHeight: round(safeCssHeight) };
+		};
+
+		const measureViewport = () => {
+			const rect = canvas.getBoundingClientRect();
+			setViewportSize(rect.width, rect.height);
+		};
+
+		if (typeof ResizeObserver === "function") {
+			renderer.resizeObserver = new ResizeObserver((entries) => {
+				const entry = entries[0];
+				if (entry?.contentRect) {
+					setViewportSize(entry.contentRect.width, entry.contentRect.height);
+				}
+			});
+			renderer.resizeObserver.observe(canvas);
+		} else {
+			window.addEventListener("resize", measureViewport, { passive: true });
+		}
+		measureViewport();
+
+		const resize = () => {
+			const { width, height, cssWidth, cssHeight } = renderer.viewport;
+			if (canvas.width !== width || canvas.height !== height) {
+				canvas.width = width;
+				canvas.height = height;
+			}
+			renderer.stats.canvas = { width, height, cssWidth: round(cssWidth), cssHeight: round(cssHeight) };
+			return renderer.viewport;
+		};
+
+		return {
+			setTexture(source) {
+				renderer.current = source;
+				renderer.stats.ready = Boolean(source);
+				renderer.stats.texture = source ? { width: source.width, height: source.height } : { width: 0, height: 0 };
+			},
+			setFlow() {},
+			resize() {
+				measureViewport();
+				resize();
+			},
+			render() {
+				if (!ctx || !renderer.current) {
+					return renderer.stats;
+				}
+
+				const start = performance.now();
+				const { width, height } = resize();
+				ctx.clearRect(0, 0, width, height);
+				ctx.globalAlpha = 1;
+				ctx.drawImage(renderer.current, 0, 0, width, height);
+				renderer.stats.renderMs = round(performance.now() - start, 3);
+				return renderer.stats;
+			},
+			pause() {},
+			getStats() {
+				return { ...renderer.stats };
+			},
+		};
 	}
 
 	function createPointCloudVisualizer(canvas, fallbackCoverUrl, onPalette) {
@@ -3071,6 +4529,12 @@
 			outroStart: -10000,
 			outroDuration: 6400,
 			outroTrackUri: "",
+			switchStart: -10000,
+			switchDuration: TRACK_SWITCH_RING_RAMP_DURATION,
+			switchFrom: 0,
+			switchTo: TRACK_SWITCH_RING_TARGET,
+			switchApplyTimer: 0,
+			coverToken: 0,
 			releaseStart: -10000,
 			releaseDuration: 2200,
 			releaseFrom: 0,
@@ -3340,6 +4804,7 @@ void main() {
 
 		const api = {
 			setCover(url, uri) {
+				clearPendingSwitchApply();
 				const coverUrl = normalizeCoverUrl(url || fallbackCoverUrl);
 				if (coverUrl === visual.lastCover && visual.pointCount) {
 					if (visual.switchingCover) {
@@ -3348,22 +4813,31 @@ void main() {
 					return;
 				}
 				visual.lastCover = coverUrl;
+				const coverToken = ++visual.coverToken;
 				const activeLength = visual.pointCount * 3;
 				if (activeLength) {
 					visual.source.set(visual.target.subarray(0, activeLength), 0);
 				} else {
 					visual.source.fill(0);
 				}
-				loadCoverPoints(coverUrl, uri || "")
+				loadCoverPoints(coverUrl, uri || "", coverToken)
 					.then((points) => {
-						if (coverUrl !== visual.lastCover) {
+						if (coverToken !== visual.coverToken || coverUrl !== visual.lastCover) {
 							return;
 						}
-						applyPointData(points);
+						requestAnimationFrame(() => {
+							if (coverToken === visual.coverToken && coverUrl === visual.lastCover) {
+								applyPointData(points, true, coverToken);
+							}
+						});
 					})
 					.catch(() => {
-						if (coverUrl === visual.lastCover) {
-							applyPointData(createFallbackPoints(uri || ""));
+						if (coverToken === visual.coverToken && coverUrl === visual.lastCover) {
+							requestAnimationFrame(() => {
+								if (coverToken === visual.coverToken && coverUrl === visual.lastCover) {
+									applyPointData(createFallbackPoints(uri || ""), true, coverToken);
+								}
+							});
 						}
 					});
 			},
@@ -3384,12 +4858,14 @@ void main() {
 			startTrackSwitch(uri) {
 				const now = performance.now();
 				const hold = getRingHold(now);
+				clearPendingSwitchApply();
 				visual.outroTrackUri = uri || `switch:${now}`;
 				visual.releaseStart = -10000;
 				visual.switchingCover = true;
-				if (hold < 0.96) {
-					visual.outroStart = now - visual.outroDuration * 0.86;
-				}
+				visual.outroStart = -10000;
+				visual.switchStart = now;
+				visual.switchFrom = hold;
+				visual.switchTo = Math.max(TRACK_SWITCH_RING_TARGET, hold);
 				visual.ringStart = now;
 			},
 			cancelOutro(uri) {
@@ -3456,11 +4932,22 @@ void main() {
 		resize();
 		return api;
 
-		function applyPointData(points, animate = true) {
+		function applyPointData(points, animate = true, coverToken = visual.coverToken) {
+			if (coverToken !== visual.coverToken) {
+				return;
+			}
 			visual.lastPoints = points;
 			const previousCount = visual.pointCount;
 			const now = performance.now();
 			const useRingSource = Boolean(animate && visual.switchingCover && previousCount);
+			if (useRingSource) {
+				const switchWait = getSwitchRampWait(now);
+				if (switchWait > 0) {
+					scheduleSwitchApply(() => applyPointData(points, animate, coverToken), switchWait);
+					return;
+				}
+				clearPendingSwitchApply();
+			}
 			const pointBudget = visual.options.visual
 				? Math.min(CLOUD_MAX_POINTS, Math.max(1200, Number(visual.options.pointBudget) || CLOUD_MAX_POINTS))
 				: 0;
@@ -3518,6 +5005,7 @@ void main() {
 				visual.releaseFrom = Math.max(0.86, getRingHold(now));
 				visual.releaseStart = now;
 				visual.switchingCover = false;
+				visual.switchStart = -10000;
 				visual.outroTrackUri = "";
 			}
 			if (now - visual.ringStart > visual.ringDuration) {
@@ -3533,6 +5021,12 @@ void main() {
 			}
 
 			const now = performance.now();
+			const switchWait = getSwitchRampWait(now);
+			if (switchWait > 0) {
+				scheduleSwitchApply(releaseRingToCurrentCover, switchWait);
+				return;
+			}
+
 			for (let index = 0; index < visual.pointCount; index += 1) {
 				const targetOffset = index * 3;
 				const transitionPoint = transitionPosition(visual.seed[index], now);
@@ -3546,8 +5040,25 @@ void main() {
 			visual.releaseFrom = Math.max(0.86, getRingHold(now));
 			visual.releaseStart = now;
 			visual.switchingCover = false;
+			visual.switchStart = -10000;
 			visual.outroTrackUri = "";
 			uploadAttributeBuffer(visual.buffers.source, visual.source, visual.pointCount * 3);
+		}
+
+		function clearPendingSwitchApply() {
+			if (!visual.switchApplyTimer) {
+				return;
+			}
+			clearTimeout(visual.switchApplyTimer);
+			visual.switchApplyTimer = 0;
+		}
+
+		function scheduleSwitchApply(callback, wait) {
+			clearPendingSwitchApply();
+			visual.switchApplyTimer = setTimeout(() => {
+				visual.switchApplyTimer = 0;
+				callback();
+			}, Math.max(16, wait));
 		}
 
 		function resize() {
@@ -3651,7 +5162,24 @@ void main() {
 				? easeInOutCubic((now - visual.outroStart) / visual.outroDuration)
 				: 0;
 			const cappedOutro = Math.min(outroT, 0.9);
-			return visual.switchingCover ? Math.max(0.86, cappedOutro) : cappedOutro;
+			if (visual.switchingCover) {
+				const switchT = visual.switchStart > 0
+					? easeOutCubic((now - visual.switchStart) / visual.switchDuration)
+					: 1;
+				const switchHold = lerp(visual.switchFrom, visual.switchTo, switchT);
+				return Math.max(cappedOutro, Math.min(switchHold, 0.96));
+			}
+			return cappedOutro;
+		}
+
+		function getSwitchRampWait(now = performance.now()) {
+			if (!visual.switchingCover || visual.switchStart <= 0) {
+				return 0;
+			}
+			if (getRingHold(now) >= TRACK_SWITCH_RING_TARGET - 0.02) {
+				return 0;
+			}
+			return Math.max(0, visual.switchDuration - (now - visual.switchStart));
 		}
 
 		function render(time) {
@@ -3740,16 +5268,24 @@ void main() {
 			return visual.lastStats;
 		}
 
-		async function loadCoverPoints(url, uri) {
+		function waitForNextFrame() {
+			return new Promise((resolve) => requestAnimationFrame(resolve));
+		}
+
+		async function loadCoverPoints(url, uri, coverToken) {
 			const source = normalizeCoverUrl(url || fallbackCoverUrl);
 
 			try {
-				return await loadImagePoints(source, uri, true);
+				return await loadImagePoints(source, uri, true, coverToken);
 			} catch (directError) {
+				if (coverToken !== visual.coverToken) {
+					throw directError;
+				}
+
 				let blobUrl = "";
 				try {
 					blobUrl = await createCoverBlobUrl(source);
-					return await loadImagePoints(blobUrl, uri, false);
+					return await loadImagePoints(blobUrl, uri, false, coverToken);
 				} finally {
 					if (blobUrl) {
 						URL.revokeObjectURL(blobUrl);
@@ -3758,16 +5294,16 @@ void main() {
 			}
 		}
 
-		function loadImagePoints(source, uri, anonymous) {
+		function loadImagePoints(source, uri, anonymous, coverToken) {
 			return new Promise((resolve, reject) => {
 				const image = new Image();
 				if (anonymous && !source.startsWith("data:") && !source.startsWith("blob:")) {
 					image.crossOrigin = "anonymous";
 				}
 				image.decoding = "async";
-				image.onload = () => {
+				image.onload = async () => {
 					try {
-						resolve(sampleImagePoints(image, uri));
+						resolve(await sampleImagePoints(image, uri, coverToken));
 					} catch (error) {
 						reject(error);
 					}
@@ -3794,7 +5330,7 @@ void main() {
 			return URL.createObjectURL(await response.blob());
 		}
 
-		function sampleImagePoints(image, uri) {
+		async function sampleImagePoints(image, uri, coverToken) {
 			const sampler = document.createElement("canvas");
 			sampler.width = CLOUD_SAMPLE_SIZE;
 			sampler.height = CLOUD_SAMPLE_SIZE;
@@ -3806,6 +5342,10 @@ void main() {
 			const candidates = [];
 
 			for (let y = 0; y < CLOUD_SAMPLE_SIZE; y += 1) {
+				if (coverToken !== visual.coverToken) {
+					throw new Error("Cover sampling cancelled");
+				}
+
 				for (let x = 0; x < CLOUD_SAMPLE_SIZE; x += 1) {
 					const offset = (y * CLOUD_SAMPLE_SIZE + x) * 4;
 					const alpha = imageData[offset + 3] / 255;
@@ -3855,6 +5395,14 @@ void main() {
 						brightness,
 					});
 				}
+
+				if (y > 0 && y % COVER_SAMPLE_CHUNK_ROWS === 0) {
+					await waitForNextFrame();
+				}
+			}
+
+			if (coverToken !== visual.coverToken) {
+				throw new Error("Cover sampling cancelled");
 			}
 
 			const palette = createPaletteFromPoints(candidates);
@@ -3994,19 +5542,14 @@ void main() {
 
 		const accentBucket = colorBuckets[0] || null;
 		const accentHsl = normalizeAccentHsl(accentBucket?.hsl || baseHsl);
-		const secondaryBucket =
-			colorBuckets.find((bucket) => circularHueDistance(bucket.hsl.h, accentHsl.h) > 0.13) ||
-			colorBuckets.find((bucket) => circularHueDistance(bucket.hsl.h, accentHsl.h) > 0.08) ||
-			null;
+		const secondaryBucket = selectSecondaryPaletteBucket(colorBuckets, accentHsl, accentBucket);
 		const highlightBucket =
 			colorBuckets.find((bucket) => circularHueDistance(bucket.hsl.h, accentHsl.h) < 0.16 && bucket.hsl.l > accentHsl.l + 0.04) ||
 			colorBuckets.find((bucket) => bucket.hsl.l > 0.58 && bucket.hsl.s > 0.16) ||
 			null;
 
 		const neutralAccent = accentHsl.s < 0.2 || averageSaturation < 0.18;
-		const secondaryFallback = neutralAccent
-			? { h: (accentHsl.h + 0.06) % 1, s: accentHsl.s * 0.72, l: clamp(accentHsl.l - 0.06, 0.38, 0.62) }
-			: { h: (accentHsl.h + 0.38) % 1, s: accentHsl.s, l: accentHsl.l };
+		const secondaryFallback = createSecondaryFallbackHsl(accentHsl, neutralAccent);
 		const secondaryHsl = normalizeAccentHsl(secondaryBucket?.hsl || secondaryFallback);
 		const highlightBase = highlightBucket?.hsl || accentHsl;
 		const highlightHsl = normalizeHighlightHsl(highlightBase, accentHsl, neutralAccent);
@@ -4031,6 +5574,45 @@ void main() {
 
 	function bucketToHsl(bucket) {
 		return rgbToHsl(bucket.r / bucket.weight, bucket.g / bucket.weight, bucket.b / bucket.weight);
+	}
+
+	function selectSecondaryPaletteBucket(colorBuckets, accentHsl, accentBucket) {
+		const minRank = (accentBucket?.rank || 0) * 0.18;
+		const minWeight = (accentBucket?.weight || 0) * 0.12;
+		const meaningful = colorBuckets.filter((bucket) =>
+			bucket !== accentBucket &&
+			bucket.rank >= minRank &&
+			bucket.weight >= minWeight &&
+			bucket.hsl.s > 0.18
+		);
+
+		return (
+			meaningful.find((bucket) => circularHueDistance(bucket.hsl.h, accentHsl.h) > 0.13) ||
+			meaningful.find((bucket) => circularHueDistance(bucket.hsl.h, accentHsl.h) > 0.08) ||
+			null
+		);
+	}
+
+	function createSecondaryFallbackHsl(accentHsl, neutralAccent) {
+		if (neutralAccent) {
+			return {
+				h: shiftHue(accentHsl.h, 0.05),
+				s: accentHsl.s * 0.72,
+				l: clamp(accentHsl.l - 0.06, 0.38, 0.62),
+			};
+		}
+
+		const redFamily = accentHsl.h <= 0.08 || accentHsl.h >= 0.92;
+		const hueShift = redFamily ? -0.035 : 0.065;
+		return {
+			h: shiftHue(accentHsl.h, hueShift),
+			s: clamp(accentHsl.s * 0.82, 0.34, 0.78),
+			l: clamp(accentHsl.l + 0.045, 0.42, 0.68),
+		};
+	}
+
+	function shiftHue(hue, amount) {
+		return ((hue + amount) % 1 + 1) % 1;
 	}
 
 	function createDefaultPalette() {
@@ -4257,22 +5839,40 @@ body.novaplayer-open {
 		--novaplayer-nebula-cyan-alpha: 0.1;
 		--novaplayer-nebula-lime-alpha: 0.06;
 		--novaplayer-nebula-rotate: 0deg;
-		--novaplayer-cosmos-current: none;
-		--novaplayer-cosmos-prev: none;
-		--novaplayer-cosmos-current-opacity: 1;
-		--novaplayer-cosmos-prev-opacity: 0;
 		--novaplayer-pointer-strength: 0;
 		--novaplayer-cloud-brightness: 1;
 		--novaplayer-cloud-saturation: 1.28;
 		--novaplayer-star-opacity: 0.9;
 		--novaplayer-cosmos-brightness: 0.92;
 		--novaplayer-word-glow: 1;
+		--novaplayer-word-current-scale: 1.055;
+		--novaplayer-lyric-current-min: 34px;
+		--novaplayer-lyric-current-fluid: 4.8vw;
+		--novaplayer-lyric-current-max: 82px;
+		--novaplayer-lyric-side-min: 13px;
+		--novaplayer-lyric-side-fluid: 1vw;
+		--novaplayer-lyric-side-max: 20px;
+		--novaplayer-back-vocal-min: 14px;
+		--novaplayer-back-vocal-fluid: 1.25vw;
+		--novaplayer-back-vocal-max: 24px;
+		--novaplayer-lyric-mobile-current-min: 32px;
+		--novaplayer-lyric-mobile-current-fluid: 11vw;
+		--novaplayer-lyric-mobile-current-max: 58px;
+		--novaplayer-back-mobile-min: 13px;
+		--novaplayer-back-mobile-fluid: 3.6vw;
+		--novaplayer-back-mobile-max: 20px;
 		--novaplayer-layout-lyrics-x: 0px;
 		--novaplayer-layout-lyrics-y: 0px;
+		--novaplayer-layout-lyric-meta-gap: 0px;
 		--novaplayer-layout-cloud-x: 0px;
 		--novaplayer-layout-cloud-y: 0px;
+		--novaplayer-layout-playlists-x: 0px;
+		--novaplayer-layout-playlists-y: 0px;
+		--novaplayer-layout-queue-x: 0px;
+		--novaplayer-layout-queue-y: 0px;
 		--novaplayer-layout-player-x: 0px;
 		--novaplayer-layout-player-y: 0px;
+		--novaplayer-player-reveal-y: 0px;
 	--novaplayer-hot: #f0a33b;
 	--novaplayer-hot-rgb: 240, 163, 59;
 	--novaplayer-cyan: #42c77b;
@@ -4554,6 +6154,7 @@ body.novaplayer-open {
 #${ROOT_ID} .novaplayer__playlist-hotzone {
 	position: absolute;
 	left: 0;
+	right: auto;
 	top: 0;
 	bottom: 0;
 	z-index: 34;
@@ -4561,10 +6162,21 @@ body.novaplayer-open {
 	pointer-events: auto;
 }
 
+#${ROOT_ID}.is-playlists-right .novaplayer__playlist-hotzone {
+	left: auto;
+	right: 0;
+}
+
+#${ROOT_ID}.hide-playlists .novaplayer__playlist-hotzone,
+#${ROOT_ID}.hide-playlists .novaplayer__playlists {
+	display: none;
+}
+
 #${ROOT_ID} .novaplayer__playlists {
 	position: absolute;
 	left: clamp(14px, 1.6vw, 28px);
-	top: 50%;
+	right: auto;
+	top: calc(50% + var(--novaplayer-layout-playlists-y));
 	z-index: 35;
 	width: clamp(280px, 22vw, 380px);
 	max-height: min(72vh, 620px);
@@ -4584,7 +6196,7 @@ body.novaplayer-open {
 	filter:
 		drop-shadow(1.4px 0 0 rgba(var(--novaplayer-hot-rgb),0.16))
 		drop-shadow(-1.4px 0 0 rgba(var(--novaplayer-cyan-rgb),0.13));
-	transform: translate(-112%, -50%) scale(.98);
+	transform: translate(calc(-112% + var(--novaplayer-layout-playlists-x)), -50%) scale(.98);
 	transform-origin: left center;
 	opacity: 0;
 	pointer-events: none;
@@ -4592,9 +6204,20 @@ body.novaplayer-open {
 }
 
 #${ROOT_ID}.is-playlists-open .novaplayer__playlists {
-	transform: translate(0, -50%) scale(1);
+	transform: translate(var(--novaplayer-layout-playlists-x), -50%) scale(1);
 	opacity: 1;
 	pointer-events: auto;
+}
+
+#${ROOT_ID}.is-playlists-right .novaplayer__playlists {
+	left: auto;
+	right: clamp(14px, 1.6vw, 28px);
+	transform: translate(calc(112% + var(--novaplayer-layout-playlists-x)), -50%) scale(.98);
+	transform-origin: right center;
+}
+
+#${ROOT_ID}.is-playlists-right.is-playlists-open .novaplayer__playlists {
+	transform: translate(var(--novaplayer-layout-playlists-x), -50%) scale(1);
 }
 
 #${ROOT_ID} .novaplayer__playlists-head {
@@ -4858,6 +6481,38 @@ body.novaplayer-open {
 	accent-color: rgb(var(--novaplayer-hot-rgb));
 }
 
+#${ROOT_ID} .novaplayer__setting-row select {
+	width: 132px;
+	min-width: 0;
+	height: 32px;
+	padding: 0 28px 0 10px;
+	border: 1px solid rgba(255,255,255,0.14);
+	border-radius: 10px;
+	background:
+		linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.035)),
+		rgba(8, 6, 12, 0.72);
+	color: rgba(255,255,255,0.86);
+	font: inherit;
+	font-size: 11px;
+	font-weight: 800;
+	outline: none;
+	cursor: pointer;
+}
+
+#${ROOT_ID} .novaplayer__setting-row select:hover,
+#${ROOT_ID} .novaplayer__setting-row select:focus-visible {
+	border-color: rgba(var(--novaplayer-cyan-rgb),0.42);
+	box-shadow: 0 0 0 1px rgba(var(--novaplayer-cyan-rgb),0.14);
+}
+
+#${ROOT_ID} .novaplayer__setting-row:has(input:disabled) {
+	opacity: .42;
+}
+
+#${ROOT_ID} .novaplayer__setting-row input:disabled {
+	cursor: not-allowed;
+}
+
 #${ROOT_ID} .novaplayer__setting-row--toggle input {
 	justify-self: end;
 	width: 18px;
@@ -4949,47 +6604,21 @@ body.novaplayer-open {
 	transition: none;
 }
 
-#${ROOT_ID} .novaplayer__cosmos::before,
-#${ROOT_ID} .novaplayer__cosmos::after {
-	content: "";
+#${ROOT_ID} .novaplayer__cosmos-texture {
 	position: absolute;
-	inset: -4%;
-	border-radius: 0;
+	left: -4%;
+	top: -4%;
+	z-index: 0;
+	display: block;
+	width: 108%;
+	height: 108%;
 	pointer-events: none;
-	background-repeat: no-repeat;
-	background-size: cover;
-	background-position: center;
-	filter: saturate(1.05) brightness(1.02) contrast(1.1);
-	transition: opacity ${PALETTE_TRANSITION_DURATION}ms ease;
-	will-change: opacity, transform, filter;
-}
-
-#${ROOT_ID} .novaplayer__cosmos::before {
-	background-image: var(--novaplayer-cosmos-prev);
-	opacity: calc(var(--novaplayer-cosmos-prev-opacity) * var(--novaplayer-star-opacity));
-	transform: translate(var(--novaplayer-flow-shift-x), var(--novaplayer-flow-shift-y)) rotateZ(-0.4deg) scale(1.055);
+	background: transparent;
 	mix-blend-mode: normal;
 	mask-image: none;
 	-webkit-mask-image: none;
 	animation: none;
-}
-
-#${ROOT_ID} .novaplayer__cosmos::after {
-	background-image: var(--novaplayer-cosmos-current);
-	opacity: calc(var(--novaplayer-cosmos-current-opacity) * var(--novaplayer-star-opacity));
-	transform: translate(var(--novaplayer-flow-shift-x), var(--novaplayer-flow-shift-y)) rotateZ(0.55deg) scale(1.05);
-	mix-blend-mode: normal;
-	mask-image: none;
-	-webkit-mask-image: none;
-	animation: none;
-}
-
-#${ROOT_ID}.is-universe-jump .novaplayer__cosmos::before {
-	animation: none;
-}
-
-#${ROOT_ID}.is-universe-jump .novaplayer__cosmos::after {
-	animation: none;
+	will-change: opacity;
 }
 
 #${ROOT_ID} .novaplayer__aura {
@@ -5029,6 +6658,10 @@ body.novaplayer-open {
 	will-change: transform, opacity;
 }
 
+#${ROOT_ID}.is-cover-backdrop .novaplayer__cover-echo {
+	display: block;
+}
+
 #${ROOT_ID} .novaplayer__cloud {
 	position: absolute;
 	left: 50%;
@@ -5044,6 +6677,11 @@ body.novaplayer-open {
 		scale(1);
 	filter: saturate(var(--novaplayer-cloud-saturation)) contrast(1.06) brightness(var(--novaplayer-cloud-brightness));
 	will-change: transform, opacity, filter;
+}
+
+#${ROOT_ID}.is-cover-backdrop .novaplayer__cloud,
+#${ROOT_ID}.hide-cover-art.is-cover-backdrop .novaplayer__cover-echo {
+	display: none;
 }
 
 #${ROOT_ID} .novaplayer__cloud.is-fallback {
@@ -5092,8 +6730,12 @@ body.novaplayer-open {
 	pointer-events: none;
 }
 
+#${ROOT_ID} .novaplayer__lyrics.is-hidden {
+	display: none;
+}
+
 #${ROOT_ID}.novaplayer-debug-no-world3d .novaplayer__lyrics {
-	transform: translate(calc(-50% + var(--novaplayer-layout-lyrics-x)), calc(-50% + var(--novaplayer-layout-lyrics-y)));
+	transform: translate(calc(-50% + var(--novaplayer-layout-lyrics-x)), calc(-50% + var(--novaplayer-layout-lyrics-y) + var(--novaplayer-layout-lyric-meta-gap)));
 }
 
 #${ROOT_ID} .novaplayer__lyrics::before {
@@ -5128,6 +6770,10 @@ body.novaplayer-open {
 		drop-shadow(-1.1px 0 0 rgba(var(--novaplayer-cyan-rgb),0.18));
 }
 
+#${ROOT_ID}.hide-lyric-mode .novaplayer__vocal-role {
+	display: none;
+}
+
 #${ROOT_ID} .novaplayer__lyric-current {
 	min-height: clamp(96px, 13vw, 188px);
 	display: flex;
@@ -5136,7 +6782,7 @@ body.novaplayer-open {
 	flex-wrap: wrap;
 	column-gap: 0.14em;
 	row-gap: 0.04em;
-	font-size: clamp(34px, 4.8vw, 82px);
+	font-size: clamp(var(--novaplayer-lyric-current-min), var(--novaplayer-lyric-current-fluid), var(--novaplayer-lyric-current-max));
 	line-height: 1.08;
 	font-weight: 900;
 	overflow-wrap: anywhere;
@@ -5144,36 +6790,67 @@ body.novaplayer-open {
 	color: rgba(255,255,255,0.95);
 	position: relative;
 	z-index: 2;
+	transform-origin: 50% 54%;
+	will-change: transform, opacity, filter;
+}
+
+#${ROOT_ID}.hide-lyric-current .novaplayer__lyric-current {
+	display: none;
+	min-height: 0;
 }
 
 #${ROOT_ID} .novaplayer__lyric-word {
 	display: inline-block;
 	--novaplayer-word-progress: 0%;
-	color: rgba(255,255,255,0.42);
-	background-image:
-		linear-gradient(90deg,
-			rgba(var(--novaplayer-hot-rgb), 0.98) 0%,
-			rgba(255,255,255,0.98) var(--novaplayer-word-progress),
-			rgba(255,255,255,0.38) calc(var(--novaplayer-word-progress) + 16%),
-			rgba(255,255,255,0.34) 100%);
-	background-clip: text;
-	-webkit-background-clip: text;
-	-webkit-text-fill-color: transparent;
+	position: relative;
+	color: rgba(255,255,255,0.36);
+	background-image: none;
+	background-clip: border-box;
+	-webkit-background-clip: border-box;
+	-webkit-text-fill-color: currentColor;
 	transform: translateY(0) scale(1);
 	filter: blur(0);
 	text-shadow:
-		0 0 calc(4px + 10px * var(--novaplayer-word-glow)) rgba(255,255,255, calc(0.04 * var(--novaplayer-word-glow))),
+		0 0 calc(4px + 10px * var(--novaplayer-word-glow)) rgba(255,255,255, calc(0.035 * var(--novaplayer-word-glow))),
 		0 12px 48px rgba(0,0,0,0.76);
 	transition:
 		opacity 180ms ease,
 		text-shadow 160ms ease,
 		transform 220ms cubic-bezier(.16, 1, .3, 1),
 		filter 160ms ease;
-	will-change: transform, background-image, text-shadow;
+	will-change: transform, text-shadow;
+}
+
+#${ROOT_ID} .novaplayer__lyric-word::after {
+	content: attr(data-word-text);
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	color: rgb(var(--novaplayer-hot-rgb));
+	background-image:
+		linear-gradient(90deg,
+			rgba(var(--novaplayer-hot-rgb), 1) 0%,
+			rgba(var(--novaplayer-hot-rgb), .96) 72%,
+			rgba(var(--novaplayer-cyan-rgb), .86) 118%);
+	background-clip: text;
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+	clip-path: inset(0 calc(100% - var(--novaplayer-word-progress)) 0 0);
+	opacity: 0;
+	text-shadow:
+		0 0 calc(7px + 11px * var(--novaplayer-word-glow)) rgba(var(--novaplayer-hot-rgb), calc(0.38 * var(--novaplayer-word-glow))),
+		0 0 calc(18px + 16px * var(--novaplayer-word-glow)) rgba(var(--novaplayer-hot-rgb), calc(0.2 * var(--novaplayer-word-glow)));
+	transition:
+		clip-path 90ms linear,
+		opacity 120ms ease;
+	will-change: clip-path, opacity;
 }
 
 #${ROOT_ID} .novaplayer__lyric-word.is-sung {
 	opacity: 0.78;
+	background-clip: text;
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
 	background-image:
 		linear-gradient(90deg,
 			rgba(255,255,255,0.96) 0%,
@@ -5183,14 +6860,23 @@ body.novaplayer-open {
 		0 12px 46px rgba(0,0,0,0.72);
 }
 
+#${ROOT_ID} .novaplayer__lyric-word.is-sung::after {
+	opacity: 0;
+}
+
 #${ROOT_ID} .novaplayer__lyric-word.is-current {
 	opacity: 1;
-	transform: translateY(-0.045em) scale(1.055);
+	color: rgba(255,255,255,0.38);
+	-webkit-text-fill-color: currentColor;
+	transform: translateY(-0.045em) scale(var(--novaplayer-word-current-scale));
 	filter: saturate(1.28);
 	text-shadow:
-		0 0 calc(8px + 12px * var(--novaplayer-word-glow)) rgba(var(--novaplayer-hot-rgb), calc(0.4 * var(--novaplayer-word-glow))),
-		0 0 calc(20px + 18px * var(--novaplayer-word-glow)) rgba(var(--novaplayer-hot-rgb), calc(0.24 * var(--novaplayer-word-glow))),
+		0 0 calc(5px + 9px * var(--novaplayer-word-glow)) rgba(255,255,255, calc(0.06 * var(--novaplayer-word-glow))),
 		0 14px 56px rgba(0,0,0,0.72);
+}
+
+#${ROOT_ID} .novaplayer__lyric-word.is-current::after {
+	opacity: 1;
 }
 
 #${ROOT_ID} .novaplayer__lyrics[data-role="back"] .novaplayer__lyric-word.is-current,
@@ -5205,12 +6891,70 @@ body.novaplayer-open {
 	text-shadow: 0 0 18px rgba(var(--novaplayer-lime-rgb),0.5);
 }
 
+#${ROOT_ID} .novaplayer__lyrics[data-role="instrumental"] .novaplayer__vocal-role {
+	color: var(--novaplayer-cyan);
+	text-shadow: 0 0 18px rgba(var(--novaplayer-cyan-rgb),0.58);
+}
+
+#${ROOT_ID} .novaplayer__lyrics.is-instrumental .novaplayer__lyric-current {
+	align-content: center;
+	color: rgba(255,255,255,0.9);
+}
+
+#${ROOT_ID} .novaplayer__instrumental {
+	display: inline-grid;
+	justify-items: center;
+	gap: 14px;
+	font-size: clamp(var(--novaplayer-lyric-side-max), 2.8vw, var(--novaplayer-lyric-current-max));
+	line-height: 1;
+	color: rgba(255,255,255,0.9);
+	text-shadow:
+		0 0 24px rgba(var(--novaplayer-cyan-rgb),0.46),
+		0 14px 50px rgba(0,0,0,0.76);
+}
+
+#${ROOT_ID} .novaplayer__instrumental strong {
+	font-size: .42em;
+	font-weight: 950;
+	letter-spacing: .12em;
+	text-transform: uppercase;
+	color: rgba(255,255,255,0.68);
+}
+
+#${ROOT_ID} .novaplayer__instrumental-meter {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: .2em;
+	min-height: .52em;
+}
+
+#${ROOT_ID} .novaplayer__instrumental-dot {
+	width: .22em;
+	height: .22em;
+	border-radius: 999px;
+	background:
+		radial-gradient(circle at 35% 28%, rgba(255,255,255,0.92), rgba(var(--novaplayer-cyan-rgb),0.88) 54%, rgba(var(--novaplayer-hot-rgb),0.6));
+	box-shadow:
+		0 0 .42em rgba(var(--novaplayer-cyan-rgb),0.54),
+		0 .16em .7em rgba(0,0,0,0.44);
+	animation: novaplayer-instrumental-dot 1320ms cubic-bezier(.36, 0, .22, 1) infinite;
+}
+
+#${ROOT_ID} .novaplayer__instrumental-dot:nth-child(2) {
+	animation-delay: 160ms;
+}
+
+#${ROOT_ID} .novaplayer__instrumental-dot:nth-child(3) {
+	animation-delay: 320ms;
+}
+
 #${ROOT_ID} .novaplayer__lyric-prev,
 #${ROOT_ID} .novaplayer__lyric-next {
 	position: relative;
 	z-index: 2;
 	min-height: 26px;
-	font-size: clamp(13px, 1vw, 20px);
+	font-size: clamp(var(--novaplayer-lyric-side-min), var(--novaplayer-lyric-side-fluid), var(--novaplayer-lyric-side-max));
 	line-height: 1.2;
 	font-weight: 700;
 	color: rgba(255,255,255,0.34);
@@ -5220,10 +6964,65 @@ body.novaplayer-open {
 	filter: blur(0.8px);
 	text-shadow: 0 10px 36px rgba(0,0,0,0.72);
 	transition: opacity 220ms ease, filter 220ms ease;
+	transform-origin: 50% 50%;
+	will-change: transform, opacity, filter;
+}
+
+#${ROOT_ID}.hide-lyric-prev .novaplayer__lyric-prev,
+#${ROOT_ID}.hide-lyric-next .novaplayer__lyric-next {
+	display: none;
+	min-height: 0;
 }
 
 #${ROOT_ID} .novaplayer__lyric-next {
 	color: rgba(var(--novaplayer-cyan-rgb), 0.42);
+}
+
+#${ROOT_ID} .novaplayer__lyrics.is-lyric-carousel-running .novaplayer__lyric-prev:not(.novaplayer__lyric-ghost),
+#${ROOT_ID} .novaplayer__lyrics.is-lyric-carousel-running .novaplayer__lyric-current:not(.novaplayer__lyric-ghost),
+#${ROOT_ID} .novaplayer__lyrics.is-lyric-carousel-running .novaplayer__lyric-next:not(.novaplayer__lyric-ghost) {
+	visibility: hidden;
+	opacity: 0;
+	transition: none;
+}
+
+#${ROOT_ID} .novaplayer__lyric-ghost {
+	position: absolute;
+	z-index: 7;
+	margin: 0;
+	box-sizing: border-box;
+	text-align: center;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	pointer-events: none;
+	contain: layout paint;
+	will-change: transform, opacity, filter;
+}
+
+#${ROOT_ID} .novaplayer__lyric-ghost--prev,
+#${ROOT_ID} .novaplayer__lyric-ghost--next {
+	white-space: nowrap;
+}
+
+#${ROOT_ID} .novaplayer__lyric-ghost--current {
+	flex-wrap: wrap;
+	white-space: normal;
+	text-wrap: balance;
+}
+
+#${ROOT_ID} .novaplayer__lyric-ghost[data-role="back"] .novaplayer__lyric-word.is-current {
+	color: var(--novaplayer-cyan);
+	text-shadow: 0 0 18px rgba(var(--novaplayer-cyan-rgb),0.55);
+}
+
+#${ROOT_ID} .novaplayer__lyric-ghost[data-role="response"] .novaplayer__lyric-word.is-current {
+	color: var(--novaplayer-lime);
+	text-shadow: 0 0 18px rgba(var(--novaplayer-lime-rgb),0.5);
+}
+
+#${ROOT_ID} .novaplayer__lyric-ghost.is-instrumental.novaplayer__lyric-current {
+	align-content: center;
+	color: rgba(255,255,255,0.9);
 }
 
 #${ROOT_ID} .novaplayer__lyric-meta {
@@ -5257,6 +7056,10 @@ body.novaplayer-open {
 	pointer-events: none;
 }
 
+#${ROOT_ID}.hide-lyric-meta .novaplayer__lyric-meta {
+	display: none;
+}
+
 #${ROOT_ID} .novaplayer__meta-title,
 #${ROOT_ID} .novaplayer__meta-artist {
 	min-width: 0;
@@ -5283,6 +7086,10 @@ body.novaplayer-open {
 	overflow: hidden;
 }
 
+#${ROOT_ID}[data-back-vocal-effect="none"] .novaplayer__backs {
+	display: none;
+}
+
 #${ROOT_ID} .novaplayer__back-vocal {
 	position: absolute;
 	left: var(--novaplayer-back-x);
@@ -5293,7 +7100,7 @@ body.novaplayer-open {
 	background: transparent;
 	box-shadow: none;
 	color: rgba(255,255,255,0.72);
-	font-size: clamp(14px, 1.25vw, 24px);
+	font-size: clamp(var(--novaplayer-back-vocal-min), var(--novaplayer-back-vocal-fluid), var(--novaplayer-back-vocal-max));
 	font-weight: 800;
 	line-height: 1.12;
 	text-wrap: balance;
@@ -5312,8 +7119,57 @@ body.novaplayer-open {
 	will-change: transform, opacity, filter;
 }
 
-#${ROOT_ID} .novaplayer__lyrics.is-line-changing .novaplayer__lyric-current {
-	animation: novaplayer-line-pop 620ms cubic-bezier(.16, 1, .26, 1) both;
+#${ROOT_ID} .novaplayer__back-vocal::before,
+#${ROOT_ID} .novaplayer__back-vocal::after {
+	content: attr(data-text);
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	opacity: 0;
+}
+
+#${ROOT_ID} .novaplayer__back-vocal[data-effect="echo"] {
+	color: rgba(255,255,255,0.62);
+	text-shadow:
+		0 0 18px rgba(var(--novaplayer-cyan-rgb),0.34),
+		0 0 42px rgba(var(--novaplayer-hot-rgb),0.2),
+		0 22px 52px rgba(0,0,0,0.82);
+	animation: novaplayer-back-vocal-echo 4700ms cubic-bezier(.16, 1, .24, 1) forwards;
+}
+
+#${ROOT_ID} .novaplayer__back-vocal[data-effect="echo"]::before {
+	color: rgba(var(--novaplayer-hot-rgb),0.42);
+	transform: translate(-7px, 4px);
+	opacity: .5;
+	filter: blur(1.5px);
+}
+
+#${ROOT_ID} .novaplayer__back-vocal[data-effect="echo"]::after {
+	color: rgba(var(--novaplayer-cyan-rgb),0.38);
+	transform: translate(9px, -5px);
+	opacity: .46;
+	filter: blur(2.5px);
+}
+
+#${ROOT_ID} .novaplayer__back-vocal[data-effect="prism"] {
+	color: rgba(255,255,255,0.78);
+	mix-blend-mode: screen;
+	text-shadow:
+		1.8px 0 0 rgba(var(--novaplayer-hot-rgb),0.58),
+		-1.8px 0 0 rgba(var(--novaplayer-cyan-rgb),0.52),
+		0 0 28px rgba(255,255,255,0.18),
+		0 18px 46px rgba(0,0,0,0.78);
+	animation: novaplayer-back-vocal-prism 3900ms cubic-bezier(.14, .86, .22, 1) forwards;
+}
+
+#${ROOT_ID} .novaplayer__back-vocal[data-effect="orbit"] {
+	color: rgba(255,255,255,0.68);
+	transform-origin: 50% 50%;
+	text-shadow:
+		0 0 22px rgba(var(--novaplayer-lime-rgb),0.32),
+		0 0 38px rgba(var(--novaplayer-cyan-rgb),0.2),
+		0 22px 54px rgba(0,0,0,0.82);
+	animation: novaplayer-back-vocal-orbit 5200ms cubic-bezier(.18, .78, .18, 1) forwards;
 }
 
 #${ROOT_ID}.is-track-changing .novaplayer__lyrics {
@@ -5324,14 +7180,15 @@ body.novaplayer-open {
 	position: absolute;
 	z-index: 34;
 	right: clamp(14px, 1.8vw, 28px);
-	top: clamp(66px, 8vh, 96px);
+	left: auto;
+	top: calc(clamp(66px, 8vh, 96px) + var(--novaplayer-layout-queue-y));
 	width: clamp(292px, 22vw, 390px);
 	height: auto;
 	min-height: 0;
 	max-height: calc(100vh - 148px);
 	margin-left: 0;
 	padding: 0;
-	transform: translateX(calc(100% - 116px));
+	transform: translateX(calc(100% - 116px + var(--novaplayer-layout-queue-x)));
 	transform-style: flat;
 	transform-origin: right top;
 	overflow: visible;
@@ -5342,8 +7199,24 @@ body.novaplayer-open {
 
 #${ROOT_ID} .novaplayer__queue:hover,
 #${ROOT_ID} .novaplayer__queue:focus-within {
-	transform: translateX(0);
+	transform: translateX(var(--novaplayer-layout-queue-x));
 	filter: saturate(1.08) brightness(1.04);
+}
+
+#${ROOT_ID}.hide-queue .novaplayer__queue {
+	display: none;
+}
+
+#${ROOT_ID}.is-queue-left .novaplayer__queue {
+	left: clamp(14px, 1.8vw, 28px);
+	right: auto;
+	transform: translateX(calc(-100% + 116px + var(--novaplayer-layout-queue-x)));
+	transform-origin: left top;
+}
+
+#${ROOT_ID}.is-queue-left .novaplayer__queue:hover,
+#${ROOT_ID}.is-queue-left .novaplayer__queue:focus-within {
+	transform: translateX(var(--novaplayer-layout-queue-x));
 }
 
 #${ROOT_ID} .novaplayer__queue::before {
@@ -5402,6 +7275,10 @@ body.novaplayer-open {
 	opacity: 0;
 	pointer-events: none;
 	transition: opacity 180ms ease, transform 220ms cubic-bezier(.16, 1, .3, 1);
+}
+
+#${ROOT_ID}.is-queue-left .novaplayer__queue-list {
+	transform: translateX(-10px);
 }
 
 #${ROOT_ID} .novaplayer__queue:hover .novaplayer__queue-list,
@@ -5498,6 +7375,11 @@ body.novaplayer-open {
 	outline: none;
 }
 
+#${ROOT_ID}.is-queue-left .novaplayer__queue-item:hover,
+#${ROOT_ID}.is-queue-left .novaplayer__queue-item:focus-visible {
+	transform: translateX(5px) scale(1.01);
+}
+
 #${ROOT_ID} .novaplayer__queue-item.is-next {
 	grid-template-columns: 50px minmax(0, 1fr) 28px;
 	height: 64px;
@@ -5525,6 +7407,11 @@ body.novaplayer-open {
 #${ROOT_ID} .novaplayer__queue-item.is-next:hover,
 #${ROOT_ID} .novaplayer__queue-item.is-next:focus-visible {
 	transform: translateX(-5px) scale(1.012);
+}
+
+#${ROOT_ID}.is-queue-left .novaplayer__queue-item.is-next:hover,
+#${ROOT_ID}.is-queue-left .novaplayer__queue-item.is-next:focus-visible {
+	transform: translateX(5px) scale(1.012);
 }
 
 #${ROOT_ID} .novaplayer__queue-cover {
@@ -5601,6 +7488,22 @@ body.novaplayer-open {
 	animation: none;
 }
 
+#${ROOT_ID} .novaplayer__player-hotzone {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 39;
+	display: none;
+	height: clamp(96px, 18vh, 180px);
+	pointer-events: none;
+}
+
+#${ROOT_ID}.is-player-hover-reveal .novaplayer__player-hotzone {
+	display: block;
+	pointer-events: auto;
+}
+
 #${ROOT_ID} .novaplayer__player {
 	position: absolute;
 	left: 50%;
@@ -5628,12 +7531,28 @@ body.novaplayer-open {
 		inset 0 -1px 0 rgba(255,255,255,0.06);
 	backdrop-filter: blur(22px) saturate(1.45);
 	-webkit-backdrop-filter: blur(22px) saturate(1.45);
-	transform: translateX(calc(-50% + var(--novaplayer-layout-player-x))) translateY(calc(var(--novaplayer-player-anchor-y) + var(--novaplayer-layout-player-y))) scale(var(--novaplayer-player-scale));
+	transform: translateX(calc(-50% + var(--novaplayer-layout-player-x))) translateY(calc(var(--novaplayer-player-anchor-y) + var(--novaplayer-layout-player-y) + var(--novaplayer-player-reveal-y))) scale(var(--novaplayer-player-scale));
 	overflow: hidden;
 	will-change: transform;
+	opacity: 1;
+	transition: opacity 180ms ease;
 	filter:
 		drop-shadow(1.4px 0 0 rgba(var(--novaplayer-hot-rgb),0.18))
 		drop-shadow(-1.4px 0 0 rgba(var(--novaplayer-cyan-rgb),0.14));
+}
+
+#${ROOT_ID}.is-player-hover-reveal .novaplayer__player {
+	--novaplayer-player-reveal-y: 92px;
+	opacity: 0;
+	pointer-events: none;
+}
+
+#${ROOT_ID}.is-player-hover-reveal .novaplayer__player-hotzone:hover + .novaplayer__player,
+#${ROOT_ID}.is-player-hover-reveal .novaplayer__player:hover,
+#${ROOT_ID}.is-player-hover-reveal .novaplayer__player:focus-within {
+	--novaplayer-player-reveal-y: 0px;
+	opacity: 1;
+	pointer-events: auto;
 }
 
 #${ROOT_ID} .novaplayer__player::before {
@@ -5669,6 +7588,14 @@ body.novaplayer-open {
 	align-items: center;
 	gap: 11px;
 	min-width: 0;
+}
+
+#${ROOT_ID}.hide-cover-art .novaplayer__now {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+#${ROOT_ID}.hide-cover-art .novaplayer__cover {
+	display: none;
 }
 
 #${ROOT_ID} .novaplayer__cover {
@@ -5711,6 +7638,75 @@ body.novaplayer-open {
 	display: flex;
 	align-items: center;
 	gap: 5px;
+}
+
+#${ROOT_ID} .novaplayer__volume {
+	display: grid;
+	grid-template-columns: 18px minmax(92px, 128px);
+	align-items: center;
+	gap: 8px;
+	height: 34px;
+	padding: 0 10px;
+	border-radius: 999px;
+	background: rgba(255,255,255,0.045);
+	color: rgba(255,255,255,0.72);
+}
+
+#${ROOT_ID} .novaplayer__volume-icon {
+	display: grid;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+}
+
+#${ROOT_ID} .novaplayer__volume-slider {
+	--novaplayer-volume: 100%;
+	width: 128px;
+	height: 16px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 999px;
+	background:
+		linear-gradient(90deg, var(--novaplayer-hot), var(--novaplayer-cyan)) 0 50% / var(--novaplayer-volume) 4px no-repeat,
+		linear-gradient(90deg, rgba(255,255,255,0.18), rgba(255,255,255,0.12)) 0 50% / 100% 4px no-repeat;
+	accent-color: rgb(var(--novaplayer-hot-rgb));
+	cursor: pointer;
+	-webkit-appearance: none;
+	appearance: none;
+}
+
+#${ROOT_ID} .novaplayer__volume-slider::-webkit-slider-thumb {
+	width: 12px;
+	height: 12px;
+	border: 0;
+	border-radius: 50%;
+	background: #fff;
+	box-shadow: 0 0 14px rgba(255,255,255,0.62);
+	-webkit-appearance: none;
+	appearance: none;
+}
+
+#${ROOT_ID} .novaplayer__volume-slider::-moz-range-track {
+	height: 4px;
+	border: 0;
+	border-radius: 999px;
+	background: rgba(255,255,255,0.18);
+}
+
+#${ROOT_ID} .novaplayer__volume-slider::-moz-range-progress {
+	height: 4px;
+	border-radius: 999px;
+	background: linear-gradient(90deg, var(--novaplayer-hot), var(--novaplayer-cyan));
+}
+
+#${ROOT_ID} .novaplayer__volume-slider::-moz-range-thumb {
+	width: 12px;
+	height: 12px;
+	border: 0;
+	border-radius: 50%;
+	background: #fff;
+	box-shadow: 0 0 14px rgba(255,255,255,0.62);
 }
 
 #${ROOT_ID} .novaplayer__icon-button {
@@ -5845,9 +7841,15 @@ body.novaplayer-open {
 	100% { transform: translateX(74%); opacity: 0; }
 }
 
-@keyframes novaplayer-line-pop {
-	0% { opacity: 1; transform: translate(0, 14px) scale(.992); filter: blur(1px); }
-	100% { opacity: 1; transform: translate(0, 0) scale(1); filter: blur(0); }
+@keyframes novaplayer-instrumental-dot {
+	0%, 100% {
+		opacity: .38;
+		transform: translateY(.06em) scale(.76);
+	}
+	42% {
+		opacity: 1;
+		transform: translateY(-.12em) scale(1.08);
+	}
 }
 
 @keyframes novaplayer-back-vocal {
@@ -5874,6 +7876,116 @@ body.novaplayer-open {
 			rotate(var(--novaplayer-back-tilt-z))
 			scale(1.06);
 		filter: blur(12px);
+	}
+}
+
+@keyframes novaplayer-back-vocal-echo {
+	0% {
+		opacity: 0;
+		transform:
+			translate(-50%, -50%)
+			translate(0, 12px)
+			rotate(var(--novaplayer-back-tilt-z))
+			scale(.9);
+		filter: blur(12px);
+	}
+	16% {
+		opacity: .74;
+		filter: blur(.5px);
+	}
+	54% {
+		opacity: .48;
+		transform:
+			translate(-50%, -50%)
+			translate(var(--novaplayer-back-sweep-x), var(--novaplayer-back-sweep-y))
+			rotate(var(--novaplayer-back-tilt-z))
+			scale(1.02);
+		filter: blur(0);
+	}
+	100% {
+		opacity: 0;
+		transform:
+			translate(-50%, -50%)
+			translate(var(--novaplayer-back-drift-x), var(--novaplayer-back-drift-y))
+			rotate(var(--novaplayer-back-spin-z))
+			scale(1.18);
+		filter: blur(16px);
+	}
+}
+
+@keyframes novaplayer-back-vocal-prism {
+	0% {
+		opacity: 0;
+		transform:
+			translate(-50%, -50%)
+			rotate(var(--novaplayer-back-tilt-z))
+			skewX(var(--novaplayer-back-tilt-x))
+			scale(.84);
+		filter: blur(8px) saturate(1.5);
+	}
+	14% {
+		opacity: .86;
+		filter: blur(0) saturate(1.75);
+	}
+	42% {
+		opacity: .68;
+		transform:
+			translate(-50%, -50%)
+			translate(var(--novaplayer-back-sweep-x), 0)
+			rotate(var(--novaplayer-back-tilt-z))
+			skewX(var(--novaplayer-back-tilt-x))
+			scale(1.08);
+	}
+	100% {
+		opacity: 0;
+		transform:
+			translate(-50%, -50%)
+			translate(var(--novaplayer-back-drift-x), var(--novaplayer-back-drift-y))
+			rotate(var(--novaplayer-back-spin-z))
+			skewX(var(--novaplayer-back-tilt-x))
+			scale(.98);
+		filter: blur(10px) saturate(1.15);
+	}
+}
+
+@keyframes novaplayer-back-vocal-orbit {
+	0% {
+		opacity: 0;
+		transform:
+			translate(-50%, -50%)
+			perspective(900px)
+			rotateX(var(--novaplayer-back-tilt-x))
+			rotateY(var(--novaplayer-back-tilt-y))
+			rotateZ(var(--novaplayer-back-tilt-z))
+			scale(.78);
+		filter: blur(10px);
+	}
+	20% {
+		opacity: .72;
+		filter: blur(.5px);
+	}
+	62% {
+		opacity: .58;
+		transform:
+			translate(-50%, -50%)
+			translate(var(--novaplayer-back-sweep-x), var(--novaplayer-back-sweep-y))
+			perspective(900px)
+			rotateX(var(--novaplayer-back-tilt-y))
+			rotateY(var(--novaplayer-back-tilt-x))
+			rotateZ(var(--novaplayer-back-spin-z))
+			scale(1.1);
+	}
+	100% {
+		opacity: 0;
+		transform:
+			translate(-50%, -50%)
+			translate(var(--novaplayer-back-drift-x), var(--novaplayer-back-drift-y))
+			perspective(900px)
+			rotateX(var(--novaplayer-back-tilt-x))
+			rotateY(var(--novaplayer-back-tilt-y))
+			rotateZ(var(--novaplayer-back-spin-z))
+			scale(1.24);
+		filter: blur(14px);
 	}
 }
 
@@ -5969,6 +8081,18 @@ body.novaplayer-open {
 	}
 }
 
+@media (hover: none) {
+	#${ROOT_ID}.is-player-hover-reveal .novaplayer__player-hotzone {
+		display: none;
+	}
+
+	#${ROOT_ID}.is-player-hover-reveal .novaplayer__player {
+		--novaplayer-player-reveal-y: 0px;
+		opacity: 1;
+		pointer-events: auto;
+	}
+}
+
 @media (max-width: 1060px) {
 	#${ROOT_ID} .novaplayer__world {
 		grid-template-columns: 1fr;
@@ -5996,16 +8120,27 @@ body.novaplayer-open {
 	#${ROOT_ID} .novaplayer__queue {
 		left: auto;
 		right: 12px;
-		top: 68px;
+		top: calc(68px + var(--novaplayer-layout-queue-y));
 		width: min(82vw, 360px);
 		height: auto;
 		max-height: calc(100vh - 148px);
-		transform: translateX(calc(100% - 112px));
+		transform: translateX(calc(100% - 112px + var(--novaplayer-layout-queue-x)));
 	}
 
 	#${ROOT_ID} .novaplayer__queue:hover,
 	#${ROOT_ID} .novaplayer__queue:focus-within {
-		transform: translateX(0);
+		transform: translateX(var(--novaplayer-layout-queue-x));
+	}
+
+	#${ROOT_ID}.is-queue-left .novaplayer__queue {
+		left: 12px;
+		right: auto;
+		transform: translateX(calc(-100% + 112px + var(--novaplayer-layout-queue-x)));
+	}
+
+	#${ROOT_ID}.is-queue-left .novaplayer__queue:hover,
+	#${ROOT_ID}.is-queue-left .novaplayer__queue:focus-within {
+		transform: translateX(var(--novaplayer-layout-queue-x));
 	}
 
 	#${ROOT_ID} .novaplayer__queue-list {
@@ -6057,7 +8192,7 @@ body.novaplayer-open {
 	}
 
 	#${ROOT_ID} .novaplayer__lyric-current {
-		font-size: clamp(32px, 11vw, 58px);
+		font-size: clamp(var(--novaplayer-lyric-mobile-current-min), var(--novaplayer-lyric-mobile-current-fluid), var(--novaplayer-lyric-mobile-current-max));
 		min-height: 150px;
 	}
 
@@ -6088,7 +8223,7 @@ body.novaplayer-open {
 
 	#${ROOT_ID} .novaplayer__back-vocal {
 		max-width: 72vw;
-		font-size: clamp(13px, 3.6vw, 20px);
+		font-size: clamp(var(--novaplayer-back-mobile-min), var(--novaplayer-back-mobile-fluid), var(--novaplayer-back-mobile-max));
 	}
 
 	#${ROOT_ID} .novaplayer__queue {

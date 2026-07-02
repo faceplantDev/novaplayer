@@ -8,11 +8,11 @@ novaplayer is a single-file Spicetify extension that turns Spotify into a fullsc
 
 - Fullscreen player opened from a topbar or playbar button.
 - WebGL point-cloud album-cover visualizer with beat-reactive motion.
-- Synced Spotify lyrics with word highlighting when timing is available.
+- Synced Spotify lyrics with word highlighting and instrumental interlude indicators.
 - Upcoming queue and playlist drawer.
 - Liquid-glass inspired lyrics, queue, and media controls.
 - Track-switch transitions for cover art, lyrics, queue, and controls.
-- Built-in visual tuning panel for density, depth, brightness, nebula, stars, and word glow.
+- Built-in tuning panel for point-cloud/cover-backdrop mode, visibility toggles, panel placement, queue count, lyrics sizing, accent inversion, and player visibility.
 
 ## Install
 
@@ -60,7 +60,8 @@ This repository is ready for Spicetify Marketplace discovery as an extension:
 
 ## Notes
 
-- Lyrics come from Spotify's internal `color-lyrics` endpoint through `Spicetify.CosmosAsync`; tracks without available lyrics hide the lyrics ribbon.
+- Lyrics come from Spotify's internal `color-lyrics` endpoint through `Spicetify.CosmosAsync`; tracks without available lyrics hide the lyrics ribbon, and long vocal gaps show an interlude indicator instead of holding the last lyric as current.
 - Beat motion uses `Spicetify.getAudioData` when audio analysis is available, with a soft fallback pulse otherwise.
 - Queue data is built from `Spicetify.Queue.nextTracks` and `Spicetify.Player.data.nextItems`.
+- Up Next can show more queue entries from the settings panel instead of hiding after the compact carousel count.
 - novaplayer is an original implementation.
