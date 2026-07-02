@@ -39,6 +39,14 @@ spicetify config extensions novaplayer.js
 spicetify apply
 ```
 
+## Update
+
+Run the direct install flow again. This command overwrites the installed `novaplayer.js`, keeps the extension enabled, and applies Spicetify:
+
+```powershell
+$extRoot = (spicetify path -e root).Trim(); New-Item -ItemType Directory -Force -Path $extRoot | Out-Null; iwr -UseBasicParsing ("https://raw.githubusercontent.com/faceplantDev/novaplayer/main/novaplayer.js?t=" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -OutFile (Join-Path $extRoot "novaplayer.js"); $configured = (spicetify config extensions 2>$null) -join " "; if ($configured -notmatch [regex]::Escape("novaplayer.js")) { spicetify config extensions novaplayer.js }; spicetify apply
+```
+
 ## Use
 
 After Spotify restarts, click the novaplayer visualizer button in the top bar or playbar. Press `Esc` or the close button to leave the fullscreen player.
