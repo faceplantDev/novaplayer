@@ -3481,7 +3481,7 @@
 		const end = Number(breakInfo.end) || 0;
 		const duration = Math.max(0, end - start);
 		const remaining = Math.max(0, end - state.progressMs);
-		const countdownActive = duration >= INSTRUMENTAL_COUNTDOWN_MS && remaining > 0 && remaining <= INSTRUMENTAL_COUNTDOWN_MS;
+		const countdownActive = duration >= INSTRUMENTAL_MIN_VISIBLE_MS && remaining > 0 && remaining <= INSTRUMENTAL_COUNTDOWN_MS;
 		const countdown = indicator.querySelector(".novaplayer__instrumental-countdown");
 
 		indicator.classList.toggle("is-countdown", countdownActive);
@@ -3512,7 +3512,12 @@
 			return null;
 		}
 
-		const currentIndex = findRenderableLyricIndexAtOrBefore(activeIndex);
+		const activeBreak = getActiveInstrumentalBreakAt(position);
+		if (activeBreak) {
+			return activeBreak;
+		}
+
+		const currentIndex = findRenderableLyricIndexAtPosition(position, activeIndex);
 		if (currentIndex < 0) {
 			return null;
 		}
@@ -3557,6 +3562,36 @@
 			previousIndex: currentIndex,
 			nextIndex,
 		};
+	}
+
+	function getActiveInstrumentalBreakAt(position) {
+		const activeBreak = state.instrumentalBreak;
+		if (!activeBreak || position < activeBreak.start || position >= activeBreak.end) {
+			return null;
+		}
+		if (hasTimedVocalAtPosition(position, activeBreak.previousIndex, activeBreak.nextIndex)) {
+			return null;
+		}
+		return activeBreak;
+	}
+
+	function findRenderableLyricIndexAtPosition(position, fallbackIndex) {
+		const timeIndex = findLyricIndexAtOrBeforePosition(position);
+		const currentIndex = findRenderableLyricIndexAtOrBefore(timeIndex);
+		return currentIndex >= 0 ? currentIndex : findRenderableLyricIndexAtOrBefore(fallbackIndex);
+	}
+
+	function findLyricIndexAtOrBeforePosition(position) {
+		const target = Number(position) || 0;
+		let foundIndex = -1;
+		for (let index = 0; index < state.lyrics.length; index += 1) {
+			if (state.lyrics[index].start <= target) {
+				foundIndex = index;
+			} else {
+				break;
+			}
+		}
+		return foundIndex;
 	}
 
 	function getLineInstrumentalBreak(line, breakEnd) {
