@@ -35,13 +35,20 @@
 	const INSTRUMENTAL_WORD_GAP_MIN_MS = 2600;
 	const INSTRUMENTAL_MIN_VISIBLE_MS = 1700;
 	const INSTRUMENTAL_LEAD_MS = 620;
+	const INSTRUMENTAL_COUNTDOWN_MS = 3000;
 	const LYRIC_CAROUSEL_DURATION = 680;
 	const LYRIC_LINE_LEAD_MS = 45;
 	const LYRIC_WORD_LEAD_MS = 0;
 	const LYRIC_BACK_VOCAL_LEAD_MS = 40;
-	const PROGRESS_SYNC_FAST_INTERVAL = 1000 / 30;
+	const LYRIC_WORD_PROGRESS_LEAD_MS = 30;
+	const LYRIC_WORD_MIN_FILL_MS = 120;
+	const LYRIC_SHORT_WORD_MIN_FILL_MS = 170;
+	const LYRIC_WORD_ACTIVE_TAIL_MS = 80;
+	const LYRIC_SHORT_WORD_ACTIVE_TAIL_MS = 150;
+	const PROGRESS_SYNC_FAST_INTERVAL = 140;
 	const PROGRESS_SYNC_NORMAL_INTERVAL = 260;
-	const PROGRESS_SYNC_DRIFT_THRESHOLD_MS = 75;
+	const PROGRESS_SYNC_BACKWARD_TOLERANCE_MS = 220;
+	const PROGRESS_SYNC_FORWARD_SNAP_MS = 5000;
 	const PROGRESS_SYNC_WARMUP_INTERVALS = [50, 100, 150, 750];
 	const BACK_VOCAL_EFFECTS = [
 		{ value: "none", label: "Off" },
@@ -229,6 +236,8 @@
 		progressSyncPending: false,
 		progressSyncSource: "",
 		progressSyncWarmupRemaining: 0,
+		progressIgnoredSamples: 0,
+		progressLastDrift: 0,
 		durationMs: 0,
 		isPaused: true,
 		shuffle: false,
@@ -1143,6 +1152,8 @@
 				lyricProvider: state.lyricProvider,
 				lyricProviderScores: state.lyricProviderScores,
 				progressSyncSource: state.progressSyncSource,
+				progressIgnoredSamples: state.progressIgnoredSamples,
+				progressLastDrift: Math.round(state.progressLastDrift || 0),
 				lyricText: cleanLyricLine(dom.lyricCurrent.textContent || ""),
 			},
 			track: {
@@ -1644,7 +1655,7 @@
 
 	function handleProgress(event) {
 		const progress = Number(event?.data);
-		applyProgressSample(Number.isFinite(progress) ? progress : getProgressSafe(), performance.now(), "player-event", true);
+		applyProgressSample(Number.isFinite(progress) ? progress : getProgressSafe(), performance.now(), "player-event");
 		if (!state.open) {
 			updateProgress();
 		}
@@ -1657,14 +1668,17 @@
 			state.progressMs = duration
 				? clamp(state.progressMs + delta, 0, duration)
 				: Math.max(0, state.progressMs + delta);
+			requestAccurateProgressSync(time, !state.lastAccurateProgressSync, "frame");
+		} else if (!state.lastAccurateProgressSync) {
+			requestAccurateProgressSync(time, true, "paused-frame");
 		}
-
-		requestAccurateProgressSync(time, !state.lastAccurateProgressSync, "frame");
 	}
 
 	function resetProgressSyncWarmup() {
 		state.progressSyncWarmupRemaining = PROGRESS_SYNC_WARMUP_INTERVALS.length;
 		state.lastAccurateProgressSync = 0;
+		state.progressIgnoredSamples = 0;
+		state.progressLastDrift = 0;
 	}
 
 	function getProgressSyncInterval() {
@@ -1701,7 +1715,7 @@
 				}
 
 				const now = performance.now();
-				const elapsed = sample.startedAt ? now - sample.startedAt : 0;
+				const elapsed = !state.isPaused && sample.startedAt ? now - sample.startedAt : 0;
 				applyProgressSample(sample.positionMs + elapsed, now, `${sample.source}:${reason}`, force);
 			})
 			.catch(() => {
@@ -1715,6 +1729,11 @@
 	}
 
 	async function readAccurateProgressSample(startedAt) {
+		const publicProgress = readPlayerProgressValue();
+		if (Number.isFinite(publicProgress)) {
+			return { positionMs: publicProgress, startedAt: 0, source: "player-api" };
+		}
+
 		const platform = Spicetify.Platform || {};
 		const playerApi = platform.PlayerAPI || {};
 		const contextPlayer = playerApi._contextPlayer;
@@ -1724,7 +1743,7 @@
 				const result = await contextPlayer.getPositionState({});
 				const positionMs = Number(result?.position);
 				if (Number.isFinite(positionMs)) {
-					return { positionMs, startedAt, source: "context-player" };
+					return { positionMs, startedAt: 0, source: "context-player" };
 				}
 			} catch (error) {
 				// Fall through to Spotify's JS player state.
@@ -1750,16 +1769,34 @@
 		const duration = state.durationMs || getDurationSafe();
 		const nextProgress = duration ? clamp(progress, 0, duration) : Math.max(0, progress);
 		const drift = nextProgress - (Number(state.progressMs) || 0);
+		const hardApply = force && isHardProgressSampleSource(source);
+		state.progressLastDrift = drift;
 
-		if (force || state.isPaused || !state.lastProgressSync || Math.abs(drift) > PROGRESS_SYNC_DRIFT_THRESHOLD_MS) {
+		if (!hardApply && shouldIgnoreProgressSample(drift)) {
+			state.progressIgnoredSamples += 1;
+			state.progressSyncSource = `${source}:ignored-backward`;
+			return;
+		}
+
+		if (hardApply || state.isPaused || !state.lastProgressSync) {
+			state.progressMs = nextProgress;
+		} else if (!state.isPaused && drift > PROGRESS_SYNC_FORWARD_SNAP_MS) {
 			state.progressMs = nextProgress;
 		} else if (!state.isPaused && Math.abs(drift) > 4) {
-			state.progressMs += drift * 0.35;
+			state.progressMs += drift * (drift > 0 ? 0.35 : 0.08);
 		}
 
 		state.lastProgressSync = sampleTime;
 		state.progressSyncSource = source;
 		state.renderProgressDirty = true;
+	}
+
+	function isHardProgressSampleSource(source) {
+		return source === "player-data" || source === "seek";
+	}
+
+	function shouldIgnoreProgressSample(drift) {
+		return !state.isPaused && state.lastProgressSync && drift < -PROGRESS_SYNC_BACKWARD_TOLERANCE_MS;
 	}
 
 	function updateAllFromPlayer(forceTransition, playerData = Spicetify.Player.data) {
@@ -2524,6 +2561,7 @@
 								text: cleanLyricLine(word?.text || ""),
 								start: wordStart,
 								end: Math.max(wordStart + 80, Number.isFinite(rawEnd) ? rawEnd : wordStart + 160),
+								segments: normalizeLyricWordSegments(word?.segments, wordStart),
 							};
 						})
 						.filter((word) => word.text && Number.isFinite(word.start) && Number.isFinite(word.end))
@@ -2544,6 +2582,24 @@
 			roleLabel: line?.roleLabel || "",
 			estimatedWords: Boolean(line?.estimatedWords),
 		};
+	}
+
+	function normalizeLyricWordSegments(segments, fallbackStart) {
+		if (!Array.isArray(segments)) {
+			return [];
+		}
+
+		return segments
+			.map((segment) => {
+				const start = Math.max(0, Number(segment?.start) || fallbackStart);
+				const rawEnd = Number(segment?.end);
+				return {
+					text: cleanLyricLine(segment?.text || ""),
+					start,
+					end: Math.max(start + 45, Number.isFinite(rawEnd) ? rawEnd : start + 120),
+				};
+			})
+			.filter((segment) => segment.text && Number.isFinite(segment.start) && Number.isFinite(segment.end));
 	}
 
 	function createPlainLyricLines(text) {
@@ -2958,6 +3014,9 @@
 			state.instrumentalBreak = instrumentalBreak;
 			state.activeWord = nextWord;
 			renderLyrics(true);
+		} else if (instrumentalBreak) {
+			state.instrumentalBreak = instrumentalBreak;
+			updateInstrumentalIndicator(instrumentalBreak);
 		} else if (wordChanged) {
 			state.instrumentalBreak = instrumentalBreak;
 			state.activeWord = nextWord;
@@ -3074,6 +3133,7 @@
 				playLyricCarouselTransition(carouselSnapshot);
 			}
 		}
+		updateInstrumentalIndicator(breakInfo);
 	}
 
 	function captureLyricCarouselSnapshot() {
@@ -3163,7 +3223,7 @@
 
 		for (const job of jobs) {
 			const animation = job.ghost.animate(job.frames, job.options);
-			trackLyricSlotAnimation(animation, job.ghost);
+			trackLyricSlotAnimation(animation);
 		}
 	}
 
@@ -3346,20 +3406,23 @@
 		};
 	}
 
-	function trackLyricSlotAnimation(animation, ghost = null) {
+	function trackLyricSlotAnimation(animation) {
 		state.lyricSlotAnimations.push(animation);
 		const cleanup = () => {
-			if (ghost) {
-				ghost.remove();
-				state.lyricCarouselGhosts = state.lyricCarouselGhosts.filter((node) => node !== ghost);
-			}
 			state.lyricSlotAnimations = state.lyricSlotAnimations.filter((item) => item !== animation);
 			if (!state.lyricSlotAnimations.length) {
-				dom.lyrics.classList.remove("is-lyric-carousel-running");
+				completeLyricCarouselTransition();
 			}
 		};
 		animation.addEventListener("finish", cleanup, { once: true });
 		animation.addEventListener("cancel", cleanup, { once: true });
+	}
+
+	function completeLyricCarouselTransition() {
+		dom.lyrics.classList.remove("is-lyric-carousel-running");
+		for (const ghost of state.lyricCarouselGhosts.splice(0)) {
+			ghost.remove();
+		}
 	}
 
 	function cancelLyricCarouselAnimations() {
@@ -3389,11 +3452,59 @@
 			meter.append(dot);
 		}
 
-		const label = document.createElement("strong");
-		label.textContent = "Instrumental";
+		const countdown = document.createElement("span");
+		countdown.className = "novaplayer__instrumental-countdown";
+		countdown.setAttribute("aria-hidden", "true");
+		countdown.style.setProperty("--novaplayer-countdown-index", "0");
 
-		indicator.append(meter, label);
+		const countdownTrack = document.createElement("span");
+		countdownTrack.className = "novaplayer__instrumental-countdown-track";
+		for (const value of [3, 2, 1]) {
+			const number = document.createElement("span");
+			number.className = "novaplayer__instrumental-countdown-number";
+			number.textContent = String(value);
+			countdownTrack.append(number);
+		}
+		countdown.append(countdownTrack);
+
+		indicator.append(meter, countdown);
 		return indicator;
+	}
+
+	function updateInstrumentalIndicator(breakInfo) {
+		const indicator = dom.lyricCurrent.querySelector(".novaplayer__instrumental");
+		if (!indicator || !breakInfo) {
+			return;
+		}
+
+		const start = Number(breakInfo.start) || 0;
+		const end = Number(breakInfo.end) || 0;
+		const duration = Math.max(0, end - start);
+		const remaining = Math.max(0, end - state.progressMs);
+		const countdownActive = duration >= INSTRUMENTAL_COUNTDOWN_MS && remaining > 0 && remaining <= INSTRUMENTAL_COUNTDOWN_MS;
+		const countdown = indicator.querySelector(".novaplayer__instrumental-countdown");
+
+		indicator.classList.toggle("is-countdown", countdownActive);
+		if (!countdown) {
+			return;
+		}
+
+		countdown.setAttribute("aria-hidden", countdownActive ? "false" : "true");
+		if (!countdownActive) {
+			countdown.dataset.value = "";
+			countdown.classList.remove("is-ticking");
+			return;
+		}
+
+		const value = clamp(Math.ceil(remaining / 1000), 1, 3);
+		const valueText = String(value);
+		countdown.style.setProperty("--novaplayer-countdown-index", String(3 - value));
+		if (countdown.dataset.value !== valueText) {
+			countdown.dataset.value = valueText;
+			countdown.classList.remove("is-ticking");
+			countdown.getBoundingClientRect();
+			countdown.classList.add("is-ticking");
+		}
 	}
 
 	function getInstrumentalBreakState(position, activeIndex) {
@@ -3612,7 +3723,7 @@
 
 	function estimateLyricHoldMs(text) {
 		const wordCount = tokenizeLyricText(text)
-			.filter((token) => !token.space && token.text)
+			.filter((token) => !token.space && normalizeLyricMatchToken(token.text))
 			.length || 1;
 		return clamp(1000 + wordCount * 310, 1900, 5200);
 	}
@@ -3759,6 +3870,10 @@
 				dom.lyricCurrent.append(document.createTextNode(token.text));
 				continue;
 			}
+			if (!normalizeLyricMatchToken(token.text)) {
+				dom.lyricCurrent.append(document.createTextNode(token.text));
+				continue;
+			}
 
 			const span = document.createElement("span");
 			span.className = "novaplayer__lyric-word";
@@ -3837,6 +3952,7 @@
 			return;
 		}
 
+		const activeLine = state.lyrics[state.activeLine];
 		for (const word of dom.lyricCurrent.children) {
 			if (!word.classList?.contains("novaplayer__lyric-word")) {
 				continue;
@@ -3845,15 +3961,82 @@
 			const index = Number(word.dataset.wordIndex);
 			let progress = index < activeWord ? 1 : 0;
 			if (index === activeWord) {
-				const start = Number(word.dataset.wordStart);
-				const end = Number(word.dataset.wordEnd);
-				progress = Number.isFinite(start) && Number.isFinite(end) && end > start
-					? clamp((state.progressMs - start + 30) / (end - start), 0, 1)
-					: 1;
+				progress = getLyricWordFillProgress(activeLine?.words?.[index], word.dataset.wordText || word.textContent || "", state.progressMs);
 			}
 			word.style.setProperty("--novaplayer-word-progress", `${(-4 + progress * 108).toFixed(2)}%`);
 		}
 		syncLyricWordFlowGhostsFromCurrent();
+	}
+
+	function getLyricWordFillProgress(word, text, progressMs) {
+		if (!word) {
+			return 1;
+		}
+
+		if (Array.isArray(word.segments) && word.segments.length > 1) {
+			return getSegmentedLyricWordFillProgress(word, text, progressMs);
+		}
+
+		const start = Number(word.start);
+		if (!Number.isFinite(start)) {
+			return 1;
+		}
+
+		const duration = getLyricWordFillDuration(word, text);
+		return clamp((progressMs - start + LYRIC_WORD_PROGRESS_LEAD_MS) / duration, 0, 1);
+	}
+
+	function getSegmentedLyricWordFillProgress(word, text, progressMs) {
+		const segments = word.segments
+			.map((segment) => ({
+				...segment,
+				units: getLyricTextUnitCount(segment.text),
+			}))
+			.filter((segment) => segment.units > 0);
+		if (!segments.length) {
+			return getLyricWordFillProgress({ ...word, segments: [] }, text, progressMs);
+		}
+
+		const totalUnits = Math.max(getLyricTextUnitCount(text), segments.reduce((sum, segment) => sum + segment.units, 0));
+		let consumedUnits = 0;
+		for (const segment of segments) {
+			const start = Number(segment.start);
+			const rawDuration = Math.max(45, Number(segment.end) - start);
+			const duration = Math.max(rawDuration, Math.min(getLyricWordFillDuration(word, text), rawDuration + 80));
+			if (progressMs < start - LYRIC_WORD_PROGRESS_LEAD_MS) {
+				return clamp(consumedUnits / totalUnits, 0, 1);
+			}
+			if (progressMs <= start + duration) {
+				const localProgress = clamp((progressMs - start + LYRIC_WORD_PROGRESS_LEAD_MS) / duration, 0, 1);
+				return clamp((consumedUnits + segment.units * localProgress) / totalUnits, 0, 1);
+			}
+			consumedUnits += segment.units;
+		}
+
+		return 1;
+	}
+
+	function getLyricWordFillDuration(word, text = word?.text || "") {
+		const start = Number(word?.start);
+		const end = Number(word?.end);
+		const rawDuration = Number.isFinite(start) && Number.isFinite(end) ? Math.max(45, end - start) : LYRIC_WORD_MIN_FILL_MS;
+		return Math.max(rawDuration, isShortLyricWord(text || word?.text) ? LYRIC_SHORT_WORD_MIN_FILL_MS : LYRIC_WORD_MIN_FILL_MS);
+	}
+
+	function getLyricWordActiveEnd(word) {
+		const start = Number(word?.start) || 0;
+		const end = Number(word?.end) || start;
+		const tail = isShortLyricWord(word?.text) ? LYRIC_SHORT_WORD_ACTIVE_TAIL_MS : LYRIC_WORD_ACTIVE_TAIL_MS;
+		return Math.max(end + tail, start + getLyricWordFillDuration(word) + tail * 0.45);
+	}
+
+	function isShortLyricWord(text) {
+		return getLyricTextUnitCount(text) <= 2;
+	}
+
+	function getLyricTextUnitCount(text) {
+		const cleaned = cleanLyricLine(text).replace(/[()[\]{}.,!?;:'"`~_+=|\\/<>-]/g, "");
+		return Array.from(cleaned).length;
 	}
 
 	function syncLyricWordFlowGhostsFromCurrent() {
@@ -3975,8 +4158,7 @@
 			return [];
 		}
 
-		const timed = candidates.filter((word) => text.includes(word.text) || word.text.length > 1);
-		return alignTimedWordsToText(timed, text, lineStart);
+		return alignTimedWordsToText(candidates, text, lineStart);
 	}
 
 	function normalizeTimedCandidates(items, lineStart) {
@@ -4037,11 +4219,11 @@
 		const groups = [];
 		let group = [];
 		for (const syllable of syllables) {
-			group.push(syllable);
-			if (syllable.partOfWord === false) {
+			if (syllable.partOfWord === false && group.length) {
 				groups.push(group);
 				group = [];
 			}
+			group.push(syllable);
 		}
 		if (group.length) {
 			groups.push(group);
@@ -4052,6 +4234,11 @@
 				text: cleanLyricLine(items.map((item) => item.text).join("")),
 				start: items[0]?.start ?? lineStart,
 				end: items[items.length - 1]?.end ?? lineStart + 260,
+				segments: items.map((item) => ({
+					text: item.text,
+					start: item.start,
+					end: item.end,
+				})),
 			})),
 			text,
 			lineStart
@@ -4059,16 +4246,21 @@
 	}
 
 	function alignTimedWordsToText(timed, text, lineStart) {
-		const textWords = tokenizeLyricText(text).filter((token) => !token.space);
+		const textWords = tokenizeLyricText(text).filter((token) => !token.space && normalizeLyricMatchToken(token.text));
 		if (!timed.length || !textWords.length) {
 			return timed;
 		}
 
 		const orderedTimed = timed
-			.filter((word) => Number.isFinite(word.start) && Number.isFinite(word.end))
+			.filter((word) => Number.isFinite(word.start) && Number.isFinite(word.end) && normalizeLyricMatchToken(word.text))
 			.sort((a, b) => a.start - b.start);
 		if (!orderedTimed.length) {
 			return [];
+		}
+
+		const matched = matchTimedCandidatesToText(orderedTimed, textWords, lineStart);
+		if (matched.length === textWords.length) {
+			return matched;
 		}
 
 		if (orderedTimed.length === textWords.length) {
@@ -4076,6 +4268,7 @@
 				text: word.text,
 				start: orderedTimed[index]?.start ?? lineStart,
 				end: orderedTimed[index]?.end ?? lineStart + 260,
+				segments: orderedTimed[index]?.segments || [],
 			}));
 		}
 
@@ -4083,10 +4276,16 @@
 			return textWords.map((word, index) => {
 				const startIndex = Math.floor((index / textWords.length) * orderedTimed.length);
 				const endIndex = Math.max(startIndex, Math.floor(((index + 1) / textWords.length) * orderedTimed.length) - 1);
+				const segmentItems = orderedTimed.slice(startIndex, Math.min(endIndex + 1, orderedTimed.length));
 				return {
 					text: word.text,
 					start: orderedTimed[startIndex]?.start ?? lineStart,
 					end: orderedTimed[Math.min(endIndex, orderedTimed.length - 1)]?.end ?? lineStart + 260,
+					segments: segmentItems.map((item) => ({
+						text: item.text,
+						start: item.start,
+						end: item.end,
+					})),
 				};
 			});
 		}
@@ -4094,8 +4293,80 @@
 		return estimateTimedWordsFromTokens(textWords, orderedTimed[0].start, orderedTimed[orderedTimed.length - 1].end);
 	}
 
+	function matchTimedCandidatesToText(orderedTimed, textWords, lineStart) {
+		const result = [];
+		let cursor = 0;
+
+		for (const word of textWords) {
+			const target = normalizeLyricMatchToken(word.text);
+			if (!target) {
+				continue;
+			}
+
+			let match = null;
+			for (let startIndex = cursor; startIndex < orderedTimed.length; startIndex += 1) {
+				let combined = "";
+				const maxEnd = Math.min(orderedTimed.length - 1, startIndex + 7);
+				for (let endIndex = startIndex; endIndex <= maxEnd; endIndex += 1) {
+					combined += normalizeLyricMatchToken(orderedTimed[endIndex]?.text);
+					if (!combined) {
+						continue;
+					}
+					if (combined === target) {
+						match = { startIndex, endIndex };
+						break;
+					}
+					if (!target.startsWith(combined) || combined.length > target.length + 1) {
+						break;
+					}
+				}
+				if (match) {
+					break;
+				}
+			}
+
+			if (!match) {
+				return [];
+			}
+
+			const items = orderedTimed.slice(match.startIndex, match.endIndex + 1);
+			const first = items[0];
+			const last = items[items.length - 1];
+			result.push({
+				text: word.text,
+				start: first?.start ?? lineStart,
+				end: last?.end ?? first?.end ?? lineStart + 260,
+				segments: flattenLyricSegments(items),
+			});
+			cursor = match.endIndex + 1;
+		}
+
+		return result;
+	}
+
+	function flattenLyricSegments(items) {
+		return items.flatMap((item) => {
+			if (Array.isArray(item?.segments) && item.segments.length) {
+				return item.segments;
+			}
+			return [{
+				text: item?.text || "",
+				start: item?.start,
+				end: item?.end,
+			}];
+		});
+	}
+
+	function normalizeLyricMatchToken(value) {
+		return String(value || "")
+			.toLowerCase()
+			.normalize("NFKD")
+			.replace(/[\u0300-\u036f]/g, "")
+			.replace(/[^\p{L}\p{N}]+/gu, "");
+	}
+
 	function estimateLyricWords(line) {
-		const words = tokenizeLyricText(line.text).filter((token) => !token.space);
+		const words = tokenizeLyricText(line.text).filter((token) => !token.space && normalizeLyricMatchToken(token.text));
 		if (!words.length) {
 			return [];
 		}
@@ -4136,25 +4407,37 @@
 			return -1;
 		}
 
-		if (progressMs >= getLyricWordTimingEnd(line) + 80) {
+		const lastWord = line.words[line.words.length - 1];
+		const lineWordEnd = Math.max(getLyricWordTimingEnd(line) + 80, getLyricWordActiveEnd(lastWord));
+		if (progressMs >= lineWordEnd) {
 			return line.words.length;
 		}
 
+		let activeIndex = -1;
 		for (let index = 0; index < line.words.length; index += 1) {
 			const word = line.words[index];
-			if (progressMs >= word.start - 40 && progressMs < word.end + 80) {
-				return index;
-			}
 			if (progressMs < word.start) {
 				const previous = index > 0 ? line.words[index - 1] : null;
-				if (previous && progressMs >= previous.end + 80) {
+				if (previous && progressMs >= getLyricWordActiveEnd(previous)) {
 					return index - 0.5;
 				}
 				return Math.max(0, index - 1);
 			}
+			if (progressMs >= word.start - 40) {
+				activeIndex = index;
+			}
 		}
 
-		return line.words.length - 1;
+		if (activeIndex < 0) {
+			return 0;
+		}
+
+		const activeWord = line.words[activeIndex];
+		if (progressMs < getLyricWordActiveEnd(activeWord)) {
+			return activeIndex;
+		}
+
+		return activeIndex < line.words.length - 1 ? activeIndex + 0.5 : activeIndex;
 	}
 
 	function tokenizeLyricText(text) {
@@ -4578,10 +4861,16 @@
 	}
 
 	function getProgressSafe() {
+		const value = readPlayerProgressValue();
+		return Number.isFinite(value) ? value : 0;
+	}
+
+	function readPlayerProgressValue() {
 		try {
-			return Number(Spicetify.Player.getProgress?.()) || 0;
+			const value = Number(Spicetify.Player.getProgress?.());
+			return Number.isFinite(value) ? value : Number.NaN;
 		} catch (error) {
-			return 0;
+			return Number.NaN;
 		}
 	}
 
@@ -7807,7 +8096,7 @@ body.novaplayer-open {
 	display: inline-block;
 	--novaplayer-word-progress: 0%;
 	position: relative;
-	color: rgba(255,255,255,0.36);
+	color: rgba(255,255,255,0.2);
 	background-image: none;
 	background-clip: border-box;
 	-webkit-background-clip: border-box;
@@ -7815,8 +8104,8 @@ body.novaplayer-open {
 	transform: translateY(0) scale(1);
 	filter: blur(0);
 	text-shadow:
-		0 0 calc(4px + 10px * var(--novaplayer-word-glow)) rgba(255,255,255, calc(0.035 * var(--novaplayer-word-glow))),
-		0 12px 48px rgba(0,0,0,0.76);
+		0 0 calc(3px + 8px * var(--novaplayer-word-glow)) rgba(255,255,255, calc(0.018 * var(--novaplayer-word-glow))),
+		0 12px 50px rgba(0,0,0,0.82);
 	transition:
 		opacity 180ms ease,
 		text-shadow 160ms ease,
@@ -7833,9 +8122,10 @@ body.novaplayer-open {
 	color: rgb(var(--novaplayer-hot-rgb));
 	background-image:
 		linear-gradient(90deg,
-			rgba(var(--novaplayer-hot-rgb), 1) 0%,
-			rgba(var(--novaplayer-hot-rgb), .96) 72%,
-			rgba(var(--novaplayer-cyan-rgb), .86) 118%);
+			rgba(255,255,255,0.98) 0%,
+			rgba(var(--novaplayer-hot-rgb), 1) 34%,
+			rgba(var(--novaplayer-hot-rgb), .98) 76%,
+			rgba(var(--novaplayer-cyan-rgb), .92) 118%);
 	background-clip: text;
 	-webkit-background-clip: text;
 	-webkit-text-fill-color: transparent;
@@ -7845,23 +8135,24 @@ body.novaplayer-open {
 		0 0 calc(7px + 11px * var(--novaplayer-word-glow)) rgba(var(--novaplayer-hot-rgb), calc(0.38 * var(--novaplayer-word-glow))),
 		0 0 calc(18px + 16px * var(--novaplayer-word-glow)) rgba(var(--novaplayer-hot-rgb), calc(0.2 * var(--novaplayer-word-glow)));
 	transition:
-		clip-path 90ms linear,
+		clip-path 42ms linear,
 		opacity 120ms ease;
 	will-change: clip-path, opacity;
 }
 
 #${ROOT_ID} .novaplayer__lyric-word.is-sung {
-	opacity: 0.78;
+	opacity: 0.98;
 	background-clip: text;
 	-webkit-background-clip: text;
 	-webkit-text-fill-color: transparent;
 	background-image:
 		linear-gradient(90deg,
-			rgba(255,255,255,0.96) 0%,
-			rgba(255,255,255,0.86) 100%);
+			rgba(255,255,255,1) 0%,
+			rgba(255,255,255,0.96) 70%,
+			rgba(255,255,255,0.9) 100%);
 	text-shadow:
-		0 0 calc(5px + 8px * var(--novaplayer-word-glow)) rgba(255,255,255, calc(0.1 * var(--novaplayer-word-glow))),
-		0 12px 46px rgba(0,0,0,0.72);
+		0 0 calc(6px + 11px * var(--novaplayer-word-glow)) rgba(255,255,255, calc(0.18 * var(--novaplayer-word-glow))),
+		0 12px 48px rgba(0,0,0,0.78);
 }
 
 #${ROOT_ID} .novaplayer__lyric-word.is-sung::after {
@@ -7870,7 +8161,7 @@ body.novaplayer-open {
 
 #${ROOT_ID} .novaplayer__lyric-word.is-current {
 	opacity: 1;
-	color: rgba(255,255,255,0.38);
+	color: rgba(255,255,255,0.22);
 	-webkit-text-fill-color: currentColor;
 	transform: translateY(-0.045em) scale(var(--novaplayer-word-current-scale));
 	filter: saturate(1.28);
@@ -7908,21 +8199,13 @@ body.novaplayer-open {
 #${ROOT_ID} .novaplayer__instrumental {
 	display: inline-grid;
 	justify-items: center;
-	gap: 14px;
+	gap: 10px;
 	font-size: clamp(var(--novaplayer-lyric-side-max), 2.8vw, var(--novaplayer-lyric-current-max));
 	line-height: 1;
 	color: rgba(255,255,255,0.9);
 	text-shadow:
 		0 0 24px rgba(var(--novaplayer-cyan-rgb),0.46),
 		0 14px 50px rgba(0,0,0,0.76);
-}
-
-#${ROOT_ID} .novaplayer__instrumental strong {
-	font-size: .42em;
-	font-weight: 950;
-	letter-spacing: .12em;
-	text-transform: uppercase;
-	color: rgba(255,255,255,0.68);
 }
 
 #${ROOT_ID} .novaplayer__instrumental-meter {
@@ -7951,6 +8234,57 @@ body.novaplayer-open {
 
 #${ROOT_ID} .novaplayer__instrumental-dot:nth-child(3) {
 	animation-delay: 320ms;
+}
+
+#${ROOT_ID} .novaplayer__instrumental-countdown {
+	--novaplayer-countdown-index: 0;
+	display: block;
+	width: 1.32em;
+	height: 1.08em;
+	max-height: 0;
+	overflow: hidden;
+	opacity: 0;
+	transform: translateY(.06em) scale(.96);
+	filter: blur(5px);
+	transition:
+		max-height 180ms ease,
+		opacity 180ms ease,
+		transform 220ms cubic-bezier(.16, 1, .3, 1),
+		filter 180ms ease;
+}
+
+#${ROOT_ID} .novaplayer__instrumental.is-countdown .novaplayer__instrumental-countdown {
+	max-height: 1.08em;
+	opacity: 1;
+	transform: translateY(0) scale(1);
+	filter: blur(0);
+}
+
+#${ROOT_ID} .novaplayer__instrumental-countdown.is-ticking {
+	animation: novaplayer-instrumental-countdown-tick 520ms cubic-bezier(.16, 1, .3, 1) both;
+}
+
+#${ROOT_ID} .novaplayer__instrumental-countdown-track {
+	display: grid;
+	grid-auto-flow: column;
+	grid-auto-columns: 1.32em;
+	align-items: center;
+	transform: translate3d(calc(var(--novaplayer-countdown-index) * -1.32em), 0, 0);
+	transition: transform 460ms cubic-bezier(.18, .86, .16, 1);
+	will-change: transform;
+}
+
+#${ROOT_ID} .novaplayer__instrumental-countdown-number {
+	display: grid;
+	place-items: center;
+	width: 1.32em;
+	height: 1.08em;
+	font-size: .72em;
+	font-weight: 950;
+	color: rgba(255,255,255,0.94);
+	text-shadow:
+		0 0 .42em rgba(var(--novaplayer-cyan-rgb),0.64),
+		0 .22em .82em rgba(0,0,0,0.62);
 }
 
 #${ROOT_ID} .novaplayer__lyric-prev,
@@ -8853,6 +9187,21 @@ body.novaplayer-open {
 	42% {
 		opacity: 1;
 		transform: translateY(-.12em) scale(1.08);
+	}
+}
+
+@keyframes novaplayer-instrumental-countdown-tick {
+	0% {
+		transform: translateY(.08em) scale(.92);
+		filter: blur(6px);
+	}
+	46% {
+		transform: translateY(-.03em) scale(1.06);
+		filter: blur(0);
+	}
+	100% {
+		transform: translateY(0) scale(1);
+		filter: blur(0);
 	}
 }
 
