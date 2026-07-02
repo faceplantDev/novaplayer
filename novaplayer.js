@@ -9,6 +9,11 @@
 	const EXTENSION_ID = "novaplayer";
 	const ROOT_ID = "novaplayer-root";
 	const LYRIC_ENDPOINT = "https://spclient.wg.spotify.com/color-lyrics/v2/track/";
+	const LRCMUX_ENDPOINT = "https://api.lrcmux.dev/get";
+	const LRCLIB_ENDPOINT = "https://lrclib.net/api/get";
+	const BEAUTIFUL_LYRICS_ENDPOINT = "https://beautiful-lyrics.socalifornian.live/lyrics/";
+	const LYRIC_PROVIDER_TIMEOUT_MS = 6500;
+	const BEAUTIFUL_LYRICS_TIMEOUT_MS = 4500;
 	const CLOUD_SAMPLE_SIZE = 240;
 	const CLOUD_MAX_POINTS = 52000;
 	const MAX_QUEUE_ITEMS = 64;
@@ -31,6 +36,13 @@
 	const INSTRUMENTAL_MIN_VISIBLE_MS = 1700;
 	const INSTRUMENTAL_LEAD_MS = 620;
 	const LYRIC_CAROUSEL_DURATION = 680;
+	const LYRIC_LINE_LEAD_MS = 45;
+	const LYRIC_WORD_LEAD_MS = 0;
+	const LYRIC_BACK_VOCAL_LEAD_MS = 40;
+	const PROGRESS_SYNC_FAST_INTERVAL = 1000 / 30;
+	const PROGRESS_SYNC_NORMAL_INTERVAL = 260;
+	const PROGRESS_SYNC_DRIFT_THRESHOLD_MS = 75;
+	const PROGRESS_SYNC_WARMUP_INTERVALS = [50, 100, 150, 750];
 	const BACK_VOCAL_EFFECTS = [
 		{ value: "none", label: "Off" },
 		{ value: "float", label: "Float (current)" },
@@ -208,8 +220,15 @@
 		hasSyncedLyrics: false,
 		hasWordTiming: false,
 		hasWordHighlight: false,
+		lyricSyncType: "",
+		lyricProvider: "",
+		lyricProviderScores: [],
 		progressMs: 0,
 		lastProgressSync: 0,
+		lastAccurateProgressSync: 0,
+		progressSyncPending: false,
+		progressSyncSource: "",
+		progressSyncWarmupRemaining: 0,
 		durationMs: 0,
 		isPaused: true,
 		shuffle: false,
@@ -1120,6 +1139,10 @@
 				hasSyncedLyrics: state.hasSyncedLyrics,
 				hasWordTiming: state.hasWordTiming,
 				hasWordHighlight: state.hasWordHighlight,
+				lyricSyncType: state.lyricSyncType,
+				lyricProvider: state.lyricProvider,
+				lyricProviderScores: state.lyricProviderScores,
+				progressSyncSource: state.progressSyncSource,
 				lyricText: cleanLyricLine(dom.lyricCurrent.textContent || ""),
 			},
 			track: {
@@ -1532,8 +1555,11 @@
 			if (state.renderProgressDirty || Math.abs(state.progressMs - Number(dom.progress.dataset.progressMs || 0)) > 650) {
 				updateProgress();
 			}
-			const lyricInterval = state.hasWordTiming ? 90 : state.hasWordHighlight ? 130 : 220;
-			if (!state.lastLyricCheck || time - state.lastLyricCheck >= lyricInterval) {
+			const lyricInterval = state.hasWordTiming ? 0 : state.hasWordHighlight ? 80 : 180;
+			if (state.hasSyncedLyrics && state.hasWordTiming) {
+				updateActiveLyric();
+				state.lastLyricCheck = time;
+			} else if (!state.lastLyricCheck || time - state.lastLyricCheck >= lyricInterval) {
 				updateActiveLyric();
 				state.lastLyricCheck = time;
 			}
@@ -1611,42 +1637,129 @@
 		if (event?.data) {
 			state.isPaused = Boolean(event.data.isPaused);
 		}
-		state.lastProgressSync = performance.now();
 		updateControlState();
+		resetProgressSyncWarmup();
+		requestAccurateProgressSync(performance.now(), true, "playpause");
 	}
 
 	function handleProgress(event) {
 		const progress = Number(event?.data);
-		if (Number.isFinite(progress)) {
-			state.progressMs = progress;
-		} else {
-			state.progressMs = getProgressSafe();
-		}
-
-		state.lastProgressSync = performance.now();
-		state.renderProgressDirty = true;
+		applyProgressSample(Number.isFinite(progress) ? progress : getProgressSafe(), performance.now(), "player-event", true);
 		if (!state.open) {
 			updateProgress();
 		}
 	}
 
 	function syncProgressForFrame(time, delta) {
-		const syncAge = state.lastProgressSync ? time - state.lastProgressSync : Infinity;
 		const duration = state.durationMs || 0;
 
-		if (!state.isPaused && syncAge < 1800) {
+		if (!state.isPaused) {
 			state.progressMs = duration
 				? clamp(state.progressMs + delta, 0, duration)
 				: Math.max(0, state.progressMs + delta);
+		}
+
+		requestAccurateProgressSync(time, !state.lastAccurateProgressSync, "frame");
+	}
+
+	function resetProgressSyncWarmup() {
+		state.progressSyncWarmupRemaining = PROGRESS_SYNC_WARMUP_INTERVALS.length;
+		state.lastAccurateProgressSync = 0;
+	}
+
+	function getProgressSyncInterval() {
+		if (state.progressSyncWarmupRemaining > 0) {
+			const index = PROGRESS_SYNC_WARMUP_INTERVALS.length - state.progressSyncWarmupRemaining;
+			return PROGRESS_SYNC_WARMUP_INTERVALS[index] || PROGRESS_SYNC_NORMAL_INTERVAL;
+		}
+
+		return state.hasWordTiming || state.hasWordHighlight ? PROGRESS_SYNC_FAST_INTERVAL : PROGRESS_SYNC_NORMAL_INTERVAL;
+	}
+
+	function requestAccurateProgressSync(time = performance.now(), force = false, reason = "sync") {
+		if (state.progressSyncPending || !state.trackUri) {
 			return;
 		}
 
-		if (syncAge < 900) {
+		const interval = getProgressSyncInterval();
+		if (!force && state.lastAccurateProgressSync && time - state.lastAccurateProgressSync < interval) {
 			return;
 		}
 
-		state.progressMs = getProgressSafe();
-		state.lastProgressSync = time;
+		const startedAt = performance.now();
+		const trackUri = state.trackUri;
+		state.progressSyncPending = true;
+		state.lastAccurateProgressSync = time;
+		if (state.progressSyncWarmupRemaining > 0) {
+			state.progressSyncWarmupRemaining -= 1;
+		}
+
+		readAccurateProgressSample(startedAt)
+			.then((sample) => {
+				if (!sample || trackUri !== state.trackUri) {
+					return;
+				}
+
+				const now = performance.now();
+				const elapsed = sample.startedAt ? now - sample.startedAt : 0;
+				applyProgressSample(sample.positionMs + elapsed, now, `${sample.source}:${reason}`, force);
+			})
+			.catch(() => {
+				if (trackUri === state.trackUri) {
+					applyProgressSample(getProgressSafe(), performance.now(), `fallback:${reason}`, force);
+				}
+			})
+			.finally(() => {
+				state.progressSyncPending = false;
+			});
+	}
+
+	async function readAccurateProgressSample(startedAt) {
+		const platform = Spicetify.Platform || {};
+		const playerApi = platform.PlayerAPI || {};
+		const contextPlayer = playerApi._contextPlayer;
+
+		if (contextPlayer && typeof contextPlayer.getPositionState === "function") {
+			try {
+				const result = await contextPlayer.getPositionState({});
+				const positionMs = Number(result?.position);
+				if (Number.isFinite(positionMs)) {
+					return { positionMs, startedAt, source: "context-player" };
+				}
+			} catch (error) {
+				// Fall through to Spotify's JS player state.
+			}
+		}
+
+		const playerState = playerApi._state || {};
+		const positionAsOfTimestamp = Number(playerState.positionAsOfTimestamp);
+		if (Number.isFinite(positionAsOfTimestamp)) {
+			const timestamp = Number(playerState.timestamp);
+			const elapsed = !state.isPaused && Number.isFinite(timestamp) ? Math.max(0, Date.now() - timestamp) : 0;
+			return { positionMs: positionAsOfTimestamp + elapsed, startedAt: 0, source: "player-state" };
+		}
+
+		return { positionMs: getProgressSafe(), startedAt: 0, source: "player-api" };
+	}
+
+	function applyProgressSample(progress, sampleTime = performance.now(), source = "sample", force = false) {
+		if (!Number.isFinite(progress)) {
+			return;
+		}
+
+		const duration = state.durationMs || getDurationSafe();
+		const nextProgress = duration ? clamp(progress, 0, duration) : Math.max(0, progress);
+		const drift = nextProgress - (Number(state.progressMs) || 0);
+
+		if (force || state.isPaused || !state.lastProgressSync || Math.abs(drift) > PROGRESS_SYNC_DRIFT_THRESHOLD_MS) {
+			state.progressMs = nextProgress;
+		} else if (!state.isPaused && Math.abs(drift) > 4) {
+			state.progressMs += drift * 0.35;
+		}
+
+		state.lastProgressSync = sampleTime;
+		state.progressSyncSource = source;
+		state.renderProgressDirty = true;
 	}
 
 	function updateAllFromPlayer(forceTransition, playerData = Spicetify.Player.data) {
@@ -1659,17 +1772,17 @@
 
 		state.trackInfo = info;
 		state.durationMs = getDurationSafe(playerData);
-		state.progressMs = getProgressSafe();
-		state.lastProgressSync = performance.now();
 		state.isPaused = Boolean(playerData.isPaused);
 		state.shuffle = Boolean(playerData.shuffle ?? Spicetify.Player.getShuffle?.());
 		state.repeat = Number(playerData.repeat ?? Spicetify.Player.getRepeat?.() ?? 0);
 		state.heart = getHeartSafe();
+		applyProgressSample(getProgressSafe(), performance.now(), "player-data", true);
 
 		if (isNewTrack || forceTransition) {
 			state.trackUri = info.uri;
 			state.queueOffset = 0;
 			state.queueWheelRemainder = 0;
+			resetProgressSyncWarmup();
 			if (isNewTrack) {
 				cancelPendingPaletteWork();
 			}
@@ -1682,6 +1795,7 @@
 			renderTrackInfo(info);
 		}
 
+		requestAccurateProgressSync(performance.now(), true, isNewTrack ? "songchange" : "refresh");
 		renderQueue(playerData);
 		updateProgress();
 		updateControlState();
@@ -1997,14 +2111,17 @@
 
 	async function loadLyrics(info) {
 		const token = ++state.fetchToken;
-		state.lyrics = fallbackLyrics(info, "Loading lyrics");
-		state.lyricsHidden = false;
+		state.lyrics = [];
+		state.lyricsHidden = true;
 		state.instrumentalBreak = null;
 		state.hasSyncedLyrics = false;
 		state.activeLine = 0;
 		state.activeWord = -1;
 		state.hasWordTiming = false;
 		state.hasWordHighlight = false;
+		state.lyricSyncType = "";
+		state.lyricProvider = "";
+		state.lyricProviderScores = [];
 		state.renderLyricLineKey = "";
 		state.backVocalKeys = new Set();
 		dom.backs.replaceChildren();
@@ -2013,53 +2130,60 @@
 		renderLyrics();
 
 		if (!info.uri?.startsWith("spotify:track:")) {
-			hideLyrics();
 			return;
 		}
 
 		try {
-			const id = info.uri.split(":")[2];
-			const response = await Spicetify.CosmosAsync.get(`${LYRIC_ENDPOINT + id}?format=json&vocalRemoval=false&market=from_token`);
+			const id = getSpotifyTrackId(info);
+			let appliedCandidate = null;
+			const tasks = createLyricProviderTasks(info, id);
+
+			for (const task of tasks) {
+				task.promise
+					.then((candidate) => {
+						if (token !== state.fetchToken) {
+							return;
+						}
+
+						const scored = scoreAndValidateLyricCandidate(candidate, info);
+						if (!shouldApplyProgressiveLyricCandidate(scored, appliedCandidate)) {
+							return;
+						}
+
+						if (applyLyricCandidate(scored)) {
+							appliedCandidate = scored;
+						}
+					})
+					.catch(() => {
+						// Individual providers are best-effort; final selection waits for all settled results.
+					});
+			}
+
+			const results = await Promise.allSettled(tasks.map((task) => task.promise));
 
 			if (token !== state.fetchToken) {
 				return;
 			}
 
-			const rawLyrics = response?.lyrics;
-			const lines = Array.isArray(rawLyrics?.lines)
-				? rawLyrics.lines
-						.map((line) => createLyricLine(line))
-						.filter((line) => isRenderableLyricText(line.text) || line.backVocals?.length)
-				: [];
+			const candidates = results
+				.map((result) => (result.status === "fulfilled" ? result.value : null))
+				.filter(Boolean)
+				.filter((candidate) => Array.isArray(candidate.lines) && candidate.lines.length);
+			const best = selectBestLyricCandidate(candidates, info);
+			state.lyricProviderScores = candidates
+				.map((candidate) => `${candidate.label || candidate.provider}:${Math.round(candidate.score || 0)}`)
+				.slice(0, 8);
 
-			if (!lines.length) {
-				hideLyrics();
-				return;
-			} else {
-				for (let index = 0; index < lines.length; index += 1) {
-					lines[index].end = lines[index + 1]?.start || getDurationSafe() || lines[index].start + 3600;
-					syncBackVocalTiming(lines[index]);
-					lines[index].instrumentalBreaks = getWordInstrumentalBreaks(lines[index]);
-					const instrumentalBreak = isPrimaryLyricLine(lines[index]) ? getLineInstrumentalBreak(lines[index], lines[index].end) : null;
-					lines[index].instrumentalStart = instrumentalBreak?.start || 0;
-					lines[index].instrumentalEnd = instrumentalBreak?.end || 0;
-					if (!lines[index].words.length && rawLyrics.syncType === "LINE_SYNCED") {
-						lines[index].words = estimateLyricWords(lines[index]);
-						lines[index].estimatedWords = true;
-					}
+			if (!best) {
+				if (!appliedCandidate) {
+					hideLyrics();
 				}
-
-				state.lyrics = lines;
-				state.lyricsHidden = false;
-				state.hasSyncedLyrics = rawLyrics.syncType === "LINE_SYNCED";
-				state.hasWordTiming = state.hasSyncedLyrics && lines.some((line) => line.words.length && !line.estimatedWords);
-				state.hasWordHighlight = state.hasSyncedLyrics && lines.some((line) => line.words.length);
+				return;
 			}
 
-			state.activeLine = 0;
-			state.activeWord = -1;
-			state.renderLyricLineKey = "";
-			updateActiveLyric(true);
+			if (shouldApplyFinalLyricCandidate(best, appliedCandidate) && applyLyricCandidate(best)) {
+				appliedCandidate = best;
+			}
 		} catch (error) {
 			if (token !== state.fetchToken) {
 				return;
@@ -2069,12 +2193,714 @@
 		}
 	}
 
-	function fallbackLyrics(info, message) {
+	function createLyricProviderTasks(info, trackId) {
 		return [
-			{ start: 0, end: 1, text: message, words: [], role: "", roleLabel: "" },
-			{ start: 1, end: 2, text: info.title || "Unknown track", words: [], role: "", roleLabel: "" },
-			{ start: 2, end: 3, text: info.artist || info.album || "Spotify", words: [], role: "", roleLabel: "" },
+			{ provider: "spotify", promise: fetchSpotifyLyricCandidate(info, trackId) },
+			{ provider: "lrcmux", promise: fetchLrcMuxLyricCandidate(info) },
+			{ provider: "lrclib", promise: fetchLrclibLyricCandidate(info) },
+			{ provider: "beautiful-lyrics", promise: fetchBeautifulLyricCandidate(info, trackId) },
 		];
+	}
+
+	async function fetchSpotifyLyricCandidate(info, trackId) {
+		if (!trackId) {
+			return null;
+		}
+
+		const response = await withTimeout(
+			Spicetify.CosmosAsync.get(`${LYRIC_ENDPOINT + trackId}?format=json&vocalRemoval=false&market=from_token`),
+			LYRIC_PROVIDER_TIMEOUT_MS,
+			"spotify lyrics"
+		);
+		const rawLyrics = response?.lyrics;
+		const syncType = normalizeLyricSyncType(rawLyrics?.syncType) || "UNSYNCED";
+		const lines = Array.isArray(rawLyrics?.lines)
+			? rawLyrics.lines
+					.map((line) => createLyricLine(line))
+					.filter((line) => isRenderableLyricText(line.text) || line.backVocals?.length)
+			: [];
+
+		return createLyricCandidate({
+			provider: "spotify",
+			label: "spotify",
+			syncType,
+			lines,
+			info,
+		});
+	}
+
+	async function fetchLrcMuxLyricCandidate(info) {
+		const params = createLrcMuxParams(info);
+		if (!params) {
+			return null;
+		}
+
+		const { body, headers } = await fetchJsonWithTimeout(`${LRCMUX_ENDPOINT}?${params.toString()}`, {}, LYRIC_PROVIDER_TIMEOUT_MS);
+		if (!body) {
+			return null;
+		}
+
+		const level = String(body?.meta?.level || headers?.get?.("X-Sync-Level") || "").toLowerCase();
+		const source = body?.meta?.source?.id || body?.meta?.source?.name || headers?.get?.("X-Source") || "";
+		const syncType = level === "word" ? "SYLLABLE_SYNCED" : level === "line" ? "LINE_SYNCED" : "UNSYNCED";
+		const lines = normalizeStructuredProviderLines(body.lines, syncType);
+
+		return createLyricCandidate({
+			provider: "lrcmux",
+			label: source ? `lrcmux:${source}` : "lrcmux",
+			source,
+			syncType,
+			lines,
+			info,
+			providerTrack: body.track,
+		});
+	}
+
+	async function fetchLrclibLyricCandidate(info) {
+		const params = createLrclibParams(info);
+		if (!params) {
+			return null;
+		}
+
+		const { body } = await fetchJsonWithTimeout(`${LRCLIB_ENDPOINT}?${params.toString()}`, {}, LYRIC_PROVIDER_TIMEOUT_MS);
+		if (!body || body.instrumental) {
+			return null;
+		}
+
+		const syncedText = typeof body.syncedLyrics === "string" ? body.syncedLyrics : "";
+		const plainText = typeof body.plainLyrics === "string" ? body.plainLyrics : "";
+		const lines = syncedText.trim() ? parseLrcLines(syncedText) : createPlainLyricLines(plainText);
+
+		return createLyricCandidate({
+			provider: "lrclib",
+			label: "lrclib",
+			syncType: syncedText.trim() ? "LINE_SYNCED" : "UNSYNCED",
+			lines,
+			info,
+			providerTrack: {
+				title: body.trackName,
+				artist: body.artistName,
+				album: body.albumName,
+				duration: body.duration,
+			},
+		});
+	}
+
+	async function fetchBeautifulLyricCandidate(info, trackId) {
+		if (!trackId) {
+			return null;
+		}
+
+		const accessToken = await getSpotifyAccessTokenSafe();
+		if (!accessToken) {
+			return null;
+		}
+
+		const { body } = await fetchJsonWithTimeout(
+			`${BEAUTIFUL_LYRICS_ENDPOINT}${encodeURIComponent(trackId)}`,
+			{ headers: { Authorization: `Bearer ${accessToken}` } },
+			BEAUTIFUL_LYRICS_TIMEOUT_MS
+		);
+
+		return createBeautifulLyricCandidate(body, info);
+	}
+
+	function createLyricCandidate(candidate) {
+		const lines = (candidate.lines || [])
+			.map((line) => normalizeInternalLyricLine(line))
+			.filter((line) => isRenderableLyricText(line.text) || line.backVocals?.length);
+		if (!lines.length) {
+			return null;
+		}
+
+		return {
+			...candidate,
+			lines,
+			syncType: normalizeLyricSyncType(candidate.syncType) || "UNSYNCED",
+			score: 0,
+		};
+	}
+
+	function selectBestLyricCandidate(candidates, info) {
+		let best = null;
+		for (const candidate of candidates) {
+			candidate.score = scoreLyricCandidate(candidate, info);
+			if (!best || candidate.score > best.score) {
+				best = candidate;
+			}
+		}
+		return best && best.score > 0 ? best : null;
+	}
+
+	function scoreAndValidateLyricCandidate(candidate, info) {
+		if (!candidate) {
+			return null;
+		}
+
+		candidate.score = scoreLyricCandidate(candidate, info);
+		return candidate.score > 0 ? candidate : null;
+	}
+
+	function shouldApplyProgressiveLyricCandidate(candidate, current) {
+		if (!candidate) {
+			return false;
+		}
+
+		const rank = getLyricCandidateSyncRank(candidate);
+		if (!current) {
+			return candidate.provider === "spotify" || rank >= 2;
+		}
+
+		const currentRank = getLyricCandidateSyncRank(current);
+		if (rank > currentRank && candidate.score >= current.score - 12) {
+			return true;
+		}
+
+		return rank >= currentRank && candidate.score > current.score + 35;
+	}
+
+	function shouldApplyFinalLyricCandidate(candidate, current) {
+		if (!candidate) {
+			return false;
+		}
+		if (!current) {
+			return true;
+		}
+
+		const rank = getLyricCandidateSyncRank(candidate);
+		const currentRank = getLyricCandidateSyncRank(current);
+		if (rank > currentRank && candidate.score >= current.score - 12) {
+			return true;
+		}
+
+		return candidate.score > current.score + 8;
+	}
+
+	function getLyricCandidateSyncRank(candidate) {
+		const syncType = normalizeLyricSyncType(candidate?.syncType);
+		if (syncType === "SYLLABLE_SYNCED" || candidate?.lines?.some((line) => line.words?.length)) {
+			return 3;
+		}
+		if (syncType === "LINE_SYNCED") {
+			return 2;
+		}
+		return 1;
+	}
+
+	function applyLyricCandidate(candidate) {
+		const syncType = normalizeLyricSyncType(candidate?.syncType);
+		const hasSyncedLyrics = syncType === "LINE_SYNCED" || syncType === "SYLLABLE_SYNCED";
+		const lines = finalizeLyricLines(candidate?.lines || [], hasSyncedLyrics);
+		if (!lines.length) {
+			return false;
+		}
+
+		state.lyrics = lines;
+		state.lyricsHidden = false;
+		state.hasSyncedLyrics = hasSyncedLyrics;
+		state.lyricSyncType = syncType;
+		state.lyricProvider = candidate.label || candidate.provider || "";
+		state.hasWordTiming = state.hasSyncedLyrics && lines.some((line) => line.words.length && !line.estimatedWords);
+		state.hasWordHighlight = state.hasSyncedLyrics && lines.some((line) => line.words.length);
+		state.activeLine = 0;
+		state.activeWord = -1;
+		state.renderLyricLineKey = "";
+		updateActiveLyric(true);
+		return true;
+	}
+
+	function scoreLyricCandidate(candidate, info) {
+		if (!candidate?.lines?.length) {
+			return 0;
+		}
+
+		const syncType = normalizeLyricSyncType(candidate.syncType);
+		const hasRealWordTiming = candidate.lines.some((line) => line.words?.length);
+		const hasLineTiming = candidate.lines.some((line) => Number(line.start) > 0 || Number(line.end) > Number(line.start));
+		let score = Math.min(candidate.lines.length, 80);
+
+		if (syncType === "SYLLABLE_SYNCED" || hasRealWordTiming) {
+			score += 420;
+		} else if (syncType === "LINE_SYNCED" && hasLineTiming) {
+			score += 260;
+		} else {
+			score += 30;
+		}
+
+		const providerWeights = {
+			"beautiful-lyrics": 42,
+			lrcmux: 38,
+			spotify: 30,
+			lrclib: 18,
+		};
+		score += providerWeights[candidate.provider] || 0;
+
+		const source = String(candidate.source || candidate.label || "").toLowerCase();
+		if (source.includes("musixmatch")) {
+			score += 12;
+		} else if (source.includes("kugou")) {
+			score += 8;
+		} else if (source.includes("lrclib")) {
+			score += 4;
+		}
+
+		const durationMs = getProviderTrackDurationMs(candidate.providerTrack);
+		const expectedDurationMs = Number(info.durationMs || state.durationMs || getDurationSafe()) || 0;
+		if (durationMs && expectedDurationMs) {
+			const delta = Math.abs(durationMs - expectedDurationMs);
+			if (delta <= 2500) {
+				score += 28;
+			} else if (delta <= 7500) {
+				score += 12;
+			} else if (delta > 18000) {
+				score -= 80;
+			}
+		}
+
+		const textScore = scoreTrackTextMatch(candidate.providerTrack, info);
+		score += textScore;
+
+		if (candidate.lines.length < 3) {
+			score -= 40;
+		}
+
+		return score;
+	}
+
+	function finalizeLyricLines(lines, hasSyncedLyrics) {
+		const prepared = lines
+			.map((line) => normalizeInternalLyricLine(line))
+			.filter((line) => isRenderableLyricText(line.text) || line.backVocals?.length)
+			.sort((a, b) => a.start - b.start);
+
+		for (let index = 0; index < prepared.length; index += 1) {
+			const rawEnd = Number(prepared[index].end);
+			prepared[index].end =
+				prepared[index + 1]?.start ||
+				(Number.isFinite(rawEnd) && rawEnd > prepared[index].start ? rawEnd : 0) ||
+				getDurationSafe() ||
+				prepared[index].start + 3600;
+			syncBackVocalTiming(prepared[index]);
+			prepared[index].instrumentalBreaks = getWordInstrumentalBreaks(prepared[index]);
+			const instrumentalBreak = isPrimaryLyricLine(prepared[index]) ? getLineInstrumentalBreak(prepared[index], prepared[index].end) : null;
+			prepared[index].instrumentalStart = instrumentalBreak?.start || 0;
+			prepared[index].instrumentalEnd = instrumentalBreak?.end || 0;
+			if (!prepared[index].words.length && hasSyncedLyrics) {
+				prepared[index].words = estimateLyricWords(prepared[index]);
+				prepared[index].estimatedWords = true;
+			}
+		}
+
+		return prepared;
+	}
+
+	function normalizeStructuredProviderLines(rawLines, syncType) {
+		if (!Array.isArray(rawLines)) {
+			return [];
+		}
+
+		if (syncType === "UNSYNCED") {
+			return createPlainLyricLines(rawLines.map((line) => line?.text || line?.Text || "").join("\n"));
+		}
+
+		return rawLines
+			.map((line) => createLyricLine(line))
+			.filter((line) => isRenderableLyricText(line.text) || line.backVocals?.length);
+	}
+
+	function normalizeInternalLyricLine(line) {
+		const start = Math.max(0, Number(line?.start) || 0);
+		const end = Math.max(start + 80, Number(line?.end) || start + 3200);
+		return {
+			start,
+			end,
+			text: cleanLyricLine(line?.text || ""),
+			words: Array.isArray(line?.words)
+				? line.words
+						.map((word) => {
+							const wordStart = Math.max(start, Number(word?.start) || start);
+							const rawEnd = Number(word?.end);
+							return {
+								text: cleanLyricLine(word?.text || ""),
+								start: wordStart,
+								end: Math.max(wordStart + 80, Number.isFinite(rawEnd) ? rawEnd : wordStart + 160),
+							};
+						})
+						.filter((word) => word.text && Number.isFinite(word.start) && Number.isFinite(word.end))
+				: [],
+			backVocals: Array.isArray(line?.backVocals)
+				? line.backVocals
+						.map((backVocal, index) => ({
+							start: Math.max(0, Number(backVocal?.start) || start),
+							end: Math.max(Number(backVocal?.start) || start, Number(backVocal?.end) || end),
+							text: cleanLyricLine(backVocal?.text || ""),
+							index: Number(backVocal?.index ?? index) || index,
+							startRatio: backVocal?.startRatio,
+							endRatio: backVocal?.endRatio,
+						}))
+						.filter((backVocal) => backVocal.text)
+				: [],
+			role: line?.role || "",
+			roleLabel: line?.roleLabel || "",
+			estimatedWords: Boolean(line?.estimatedWords),
+		};
+	}
+
+	function createPlainLyricLines(text) {
+		const lines = String(text || "")
+			.split(/\r?\n/)
+			.map((line) => cleanLyricLine(line))
+			.filter(isRenderableLyricText);
+
+		return lines.map((line, index) => ({
+			start: index * 3200,
+			end: (index + 1) * 3200,
+			text: line,
+			words: [],
+			backVocals: [],
+			role: "",
+			roleLabel: "",
+		}));
+	}
+
+	function parseLrcLines(text) {
+		const parsed = [];
+		for (const rawLine of String(text || "").split(/\r?\n/)) {
+			const timestamps = [...rawLine.matchAll(/\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g)];
+			if (!timestamps.length) {
+				continue;
+			}
+
+			const lyricText = cleanLyricLine(rawLine.replace(/\[[^\]]+\]/g, "").replace(/<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>/g, ""));
+			if (!isRenderableLyricText(lyricText)) {
+				continue;
+			}
+
+			for (const timestamp of timestamps) {
+				const start = parseLrcTimestamp(timestamp[0]);
+				if (!Number.isFinite(start)) {
+					continue;
+				}
+				parsed.push({
+					start,
+					end: start + 3200,
+					text: lyricText,
+					words: parseEnhancedLrcWords(rawLine, start),
+					backVocals: [],
+					role: "",
+					roleLabel: "",
+				});
+			}
+		}
+
+		return parsed.sort((a, b) => a.start - b.start);
+	}
+
+	function parseEnhancedLrcWords(line, lineStart) {
+		const matches = [...String(line || "").matchAll(/<(\d{1,3}:\d{2}(?:[.:]\d{1,3})?)>([^<]*)/g)];
+		if (!matches.length) {
+			return [];
+		}
+
+		const timed = matches
+			.map((match, index) => {
+				const start = parseLrcTimestamp(match[1]);
+				const nextStart = matches[index + 1] ? parseLrcTimestamp(matches[index + 1][1]) : start + 260;
+				return {
+					text: cleanLyricLine(match[2]),
+					start,
+					end: Math.max(start + 80, nextStart),
+				};
+			})
+			.filter((word) => word.text && Number.isFinite(word.start) && Number.isFinite(word.end));
+
+		const lineText = cleanLyricLine(String(line || "").replace(/\[[^\]]+\]/g, "").replace(/<\d{1,3}:\d{2}(?:[.:]\d{1,3})?>/g, ""));
+		return alignTimedWordsToText(timed, lineText, lineStart);
+	}
+
+	function parseLrcTimestamp(value) {
+		const match = String(value || "").match(/(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?/);
+		if (!match) {
+			return NaN;
+		}
+
+		const minutes = Number(match[1]) || 0;
+		const seconds = Number(match[2]) || 0;
+		const fraction = match[3] ? Number(match[3].padEnd(3, "0").slice(0, 3)) || 0 : 0;
+		return minutes * 60000 + seconds * 1000 + fraction;
+	}
+
+	function createBeautifulLyricCandidate(rawLyrics, info) {
+		const type = String(rawLyrics?.Type || rawLyrics?.type || "").toLowerCase();
+		if (!type) {
+			return null;
+		}
+
+		let syncType = "UNSYNCED";
+		let lines = [];
+		if (type === "static") {
+			lines = createPlainLyricLines((rawLyrics.Lines || rawLyrics.lines || []).map((line) => line?.Text || line?.text || "").join("\n"));
+		} else if (type === "line") {
+			syncType = "LINE_SYNCED";
+			lines = normalizeBeautifulLineLyrics(rawLyrics.Content || rawLyrics.content || []);
+		} else if (type === "syllable") {
+			syncType = "SYLLABLE_SYNCED";
+			lines = normalizeBeautifulSyllableLyrics(rawLyrics.Content || rawLyrics.content || []);
+		}
+
+		return createLyricCandidate({
+			provider: "beautiful-lyrics",
+			label: "beautiful-lyrics",
+			syncType,
+			lines,
+			info,
+		});
+	}
+
+	function normalizeBeautifulLineLyrics(content) {
+		if (!Array.isArray(content)) {
+			return [];
+		}
+
+		return content
+			.filter((item) => String(item?.Type || item?.type || "").toLowerCase() === "vocal")
+			.map((item) => {
+				const rawText = cleanLyricLine(item.Text || item.text || "");
+				const tagged = extractPerformerTag(rawText);
+				const parenthetical = extractParentheticalBackVocals(tagged.text);
+				const start = secondsToLyricMs(item.StartTime ?? item.startTime ?? item.start ?? 0);
+				const end = secondsToLyricMs(item.EndTime ?? item.endTime ?? item.end ?? start / 1000 + 3.2);
+				return {
+					start,
+					end: end > start ? end : start + 3200,
+					text: parenthetical.text,
+					words: [],
+					backVocals: parenthetical.backVocals.map((backVocal, index) => ({
+						start,
+						end: start + 3200,
+						text: backVocal.text,
+						index,
+						startRatio: backVocal.startRatio,
+						endRatio: backVocal.endRatio,
+					})),
+					role: item.OppositeAligned || item.oppositeAligned ? "side" : "",
+					roleLabel: item.OppositeAligned || item.oppositeAligned ? "SIDE VOCAL" : "",
+				};
+			});
+	}
+
+	function normalizeBeautifulSyllableLyrics(content) {
+		if (!Array.isArray(content)) {
+			return [];
+		}
+
+		return content
+			.filter((item) => String(item?.Type || item?.type || "").toLowerCase() === "vocal")
+			.map((item) => {
+				const lead = item.Lead || item.lead || {};
+				const leadStart = secondsToLyricMs(lead.StartTime ?? lead.startTime ?? item.StartTime ?? item.startTime ?? 0);
+				const leadEnd = secondsToLyricMs(lead.EndTime ?? lead.endTime ?? item.EndTime ?? item.endTime ?? leadStart / 1000 + 3.2);
+				const syllables = normalizeBeautifulSyllables(lead.Syllables || lead.syllables || [], leadStart);
+				const text = buildTimedCandidateText(syllables);
+				const words = groupSyllablesToWords(normalizeTimedCandidates(syllables, leadStart), text, leadStart);
+				const background = Array.isArray(item.Background || item.background) ? (item.Background || item.background) : [];
+
+				return {
+					start: leadStart,
+					end: leadEnd > leadStart ? leadEnd : leadStart + 3200,
+					text,
+					words,
+					backVocals: background
+						.map((backVocal, index) => {
+							const start = secondsToLyricMs(backVocal.StartTime ?? backVocal.startTime ?? leadStart / 1000);
+							const end = secondsToLyricMs(backVocal.EndTime ?? backVocal.endTime ?? start / 1000 + 2.4);
+							const backSyllables = normalizeBeautifulSyllables(backVocal.Syllables || backVocal.syllables || [], start);
+							return {
+								start,
+								end: end > start ? end : start + 2400,
+								text: buildTimedCandidateText(backSyllables),
+								index,
+							};
+						})
+						.filter((backVocal) => backVocal.text),
+					role: item.OppositeAligned || item.oppositeAligned ? "side" : "",
+					roleLabel: item.OppositeAligned || item.oppositeAligned ? "SIDE VOCAL" : "",
+				};
+			});
+	}
+
+	function normalizeBeautifulSyllables(syllables, fallbackStart) {
+		if (!Array.isArray(syllables)) {
+			return [];
+		}
+
+		return syllables.map((syllable) => ({
+			text: syllable.Text ?? syllable.text ?? "",
+			startTimeMs: secondsToLyricMs(syllable.StartTime ?? syllable.startTime ?? fallbackStart / 1000),
+			endTimeMs: secondsToLyricMs(syllable.EndTime ?? syllable.endTime ?? fallbackStart / 1000 + 0.24),
+			isPartOfWord: Boolean(syllable.IsPartOfWord ?? syllable.isPartOfWord),
+		}));
+	}
+
+	function secondsToLyricMs(value) {
+		const number = Number(value);
+		return Number.isFinite(number) ? Math.max(0, number * 1000) : 0;
+	}
+
+	function createLrcMuxParams(info) {
+		const params = new URLSearchParams();
+		const title = cleanLyricsQueryValue(info.title);
+		const artist = cleanLyricsQueryValue(info.artist);
+		const album = cleanLyricsQueryValue(info.album);
+		const isrc = cleanLyricsQueryValue(info.isrc);
+
+		if (isrc) {
+			params.set("isrc", isrc);
+		}
+		if (artist) {
+			params.set("artist", artist);
+		}
+		if (title) {
+			params.set("title", title);
+		}
+		if (album) {
+			params.set("album", album);
+		}
+
+		const duration = getLyricsDurationSeconds(info);
+		if (duration) {
+			params.set("duration", String(duration));
+		}
+		params.set("level", "word");
+		params.set("format", "json");
+		return params.has("isrc") || (params.has("artist") && params.has("title")) ? params : null;
+	}
+
+	function createLrclibParams(info) {
+		const params = new URLSearchParams();
+		const title = cleanLyricsQueryValue(info.title);
+		const artist = cleanLyricsQueryValue(info.artist);
+		const album = cleanLyricsQueryValue(info.album);
+		const isrc = cleanLyricsQueryValue(info.isrc);
+
+		if (title) {
+			params.set("track_name", title);
+		}
+		if (artist) {
+			params.set("artist_name", artist);
+		}
+		if (album) {
+			params.set("album_name", album);
+		}
+		if (isrc) {
+			params.set("isrc", isrc);
+		}
+
+		const duration = getLyricsDurationSeconds(info);
+		if (duration) {
+			params.set("duration", String(duration));
+		}
+		return params.has("isrc") || (params.has("artist_name") && params.has("track_name")) ? params : null;
+	}
+
+	function getLyricsDurationSeconds(info) {
+		const durationMs = Number(info.durationMs || state.durationMs || getDurationSafe()) || 0;
+		return durationMs > 0 ? Math.round(durationMs / 1000) : 0;
+	}
+
+	function cleanLyricsQueryValue(value) {
+		return String(value || "").trim();
+	}
+
+	function getProviderTrackDurationMs(track) {
+		const duration = Number(track?.duration ?? track?.Duration ?? track?.durationMs ?? track?.duration_ms);
+		if (!Number.isFinite(duration) || duration <= 0) {
+			return 0;
+		}
+		return duration > 1000 ? duration : duration * 1000;
+	}
+
+	function scoreTrackTextMatch(providerTrack, info) {
+		if (!providerTrack) {
+			return 0;
+		}
+
+		let score = 0;
+		const title = normalizeLyricsMatchText(info.title);
+		const providerTitle = normalizeLyricsMatchText(providerTrack.title || providerTrack.trackName || providerTrack.name);
+		const artist = normalizeLyricsMatchText(info.artist);
+		const providerArtist = normalizeLyricsMatchText(providerTrack.artist || providerTrack.artistName);
+		if (title && providerTitle) {
+			score += title === providerTitle ? 18 : title.includes(providerTitle) || providerTitle.includes(title) ? 7 : -18;
+		}
+		if (artist && providerArtist) {
+			score += artist === providerArtist ? 12 : artist.includes(providerArtist) || providerArtist.includes(artist) ? 4 : -8;
+		}
+		return score;
+	}
+
+	function normalizeLyricsMatchText(value) {
+		return String(value || "")
+			.toLowerCase()
+			.normalize("NFKD")
+			.replace(/[\u0300-\u036f]/g, "")
+			.replace(/\s*\([^)]*(?:remaster|mono|stereo|live|explicit|instrumental)[^)]*\)/g, "")
+			.replace(/[^\p{L}\p{N}]+/gu, " ")
+			.trim();
+	}
+
+	function getSpotifyTrackId(info) {
+		const match = String(info?.uri || "").match(/^spotify:track:([^:]+)$/);
+		return match?.[1] || "";
+	}
+
+	async function getSpotifyAccessTokenSafe() {
+		try {
+			const response = await withTimeout(Spicetify.CosmosAsync.get("sp://oauth/v2/token"), 2500, "spotify token");
+			if (response?.accessToken) {
+				return response.accessToken;
+			}
+		} catch (error) {
+			// Older Spotify builds expose the token on Platform.Session.
+		}
+
+		return (
+			Spicetify.Platform?.Session?.accessToken ||
+			Spicetify.Platform?.Session?.tokens?.accessToken ||
+			""
+		);
+	}
+
+	async function fetchJsonWithTimeout(url, options = {}, timeoutMs = LYRIC_PROVIDER_TIMEOUT_MS) {
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), timeoutMs);
+		try {
+			const response = await fetch(url, {
+				...options,
+				signal: controller.signal,
+			});
+			if (!response.ok) {
+				throw new Error(`Request failed: ${response.status}`);
+			}
+
+			const text = await response.text();
+			return {
+				body: text ? JSON.parse(text) : null,
+				headers: response.headers,
+			};
+		} finally {
+			clearTimeout(timer);
+		}
+	}
+
+	function withTimeout(promise, timeoutMs, label = "operation") {
+		let timer = 0;
+		return Promise.race([
+			promise,
+			new Promise((_, reject) => {
+				timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+			}),
+		]).finally(() => clearTimeout(timer));
 	}
 
 	function hideLyrics() {
@@ -2086,6 +2912,9 @@
 		state.activeWord = -1;
 		state.hasWordTiming = false;
 		state.hasWordHighlight = false;
+		state.lyricSyncType = "";
+		state.lyricProvider = "";
+		state.lyricProviderScores = [];
 		state.renderLyricLineKey = "";
 		state.backVocalKeys = new Set();
 		state.renderedActiveWord = -1;
@@ -2101,7 +2930,7 @@
 		let nextIndex = 0;
 
 		if (state.hasSyncedLyrics) {
-			const position = state.progressMs + 120;
+			const position = state.progressMs + LYRIC_LINE_LEAD_MS;
 			for (let index = 0; index < state.lyrics.length; index += 1) {
 				if (state.lyrics[index].start <= position) {
 					nextIndex = index;
@@ -2112,9 +2941,11 @@
 		}
 
 		const instrumentalBreak = getInstrumentalBreakState(state.progressMs, nextIndex);
-		const nextWord = !instrumentalBreak && state.hasWordHighlight ? getActiveWordIndex(state.lyrics[nextIndex], state.progressMs) : -1;
+		const nextWord = !instrumentalBreak && state.hasWordHighlight
+			? getActiveWordIndex(state.lyrics[nextIndex], state.progressMs + LYRIC_WORD_LEAD_MS)
+			: -1;
 		if (!instrumentalBreak) {
-			showTimedBackVocals(state.progressMs + 70, nextIndex);
+			showTimedBackVocals(state.progressMs + LYRIC_BACK_VOCAL_LEAD_MS, nextIndex);
 		}
 
 		const preLyricsChanged = dom.lyrics.classList.contains("is-pre-lyrics") !== isBeforeFirstLyric();
@@ -2189,8 +3020,7 @@
 			dom.lyricPrev.textContent = previous?.text || "";
 			renderCurrentLyric(current);
 			dom.lyricNext.textContent = next?.text || "";
-			dom.vocalRole.textContent =
-				current.roleLabel || (state.hasSyncedLyrics ? (state.hasWordTiming ? "WORD SYNC" : state.hasWordHighlight ? "WORD FLOW" : "LINE SYNC") : "UNSYNCED");
+			dom.vocalRole.textContent = current.roleLabel || getLyricModeLabel();
 			dom.vocalRole.hidden = !current.roleLabel && !state.hasSyncedLyrics;
 			dom.lyrics.dataset.role = current.role || "";
 			dom.lyrics.classList.toggle("has-synced", state.hasSyncedLyrics);
@@ -2203,6 +3033,22 @@
 		}
 
 		updateLyricWordClasses(state.hasWordHighlight && displayIndex === state.activeLine ? state.activeWord : -1);
+	}
+
+	function getLyricModeLabel() {
+		if (!state.hasSyncedLyrics) {
+			return "UNSYNCED";
+		}
+		if (state.lyricSyncType === "SYLLABLE_SYNCED" && state.hasWordTiming) {
+			return "KARAOKE SYNC";
+		}
+		if (state.hasWordTiming) {
+			return "WORD SYNC";
+		}
+		if (state.hasWordHighlight) {
+			return "WORD FLOW";
+		}
+		return "LINE SYNC";
 	}
 
 	function renderInstrumentalBreak(breakInfo, animated = false) {
@@ -3045,17 +3891,18 @@
 	}
 
 	function createLyricLine(rawLine) {
-		const rawText = cleanLyricLine(rawLine.words || rawLine.text || rawLine.line || rawLine.lyrics || "");
+		const rawText = cleanLyricLine(readLyricLineText(rawLine));
 		const tagged = extractPerformerTag(rawText);
 		const parenthetical = extractParentheticalBackVocals(tagged.text);
 		const roleInfo = getLyricRole(rawLine, tagged.performer);
 		const start = normalizeLyricTime(rawLine.startTimeMs ?? rawLine.start ?? rawLine.time ?? 0, rawLine.startTimeMs != null);
+		const rawEnd = normalizeLyricTime(rawLine.endTimeMs ?? rawLine.end ?? rawLine.endTime ?? start + 3200, rawLine.endTimeMs != null);
 		const words = extractTimedWords(rawLine, parenthetical.text, start);
 		const isBackOnly = !isRenderableLyricText(parenthetical.text) && parenthetical.backVocals.length > 0;
 
 		return {
 			start,
-			end: start + 3200,
+			end: rawEnd > start ? rawEnd : start + 3200,
 			text: parenthetical.text,
 			words,
 			backVocals: parenthetical.backVocals.map((backVocal, index) => ({
@@ -3071,47 +3918,180 @@
 		};
 	}
 
+	function readLyricLineText(rawLine) {
+		for (const key of ["words", "text", "line", "lyrics"]) {
+			const value = rawLine?.[key];
+			if (typeof value === "string" && value.trim()) {
+				return value;
+			}
+		}
+
+		for (const key of ["words", "syllables", "wordTimings", "tokens"]) {
+			const value = rawLine?.[key];
+			if (Array.isArray(value)) {
+				const text = buildTimedCandidateText(value);
+				if (text) {
+					return text;
+				}
+			}
+		}
+
+		return "";
+	}
+
+	function buildTimedCandidateText(items) {
+		let output = "";
+		for (const item of items.flat ? items.flat(Infinity) : items) {
+			const text = readTimedCandidateText(item);
+			if (!text) {
+				continue;
+			}
+
+			const joinsPrevious = Boolean(readTimedCandidatePartOfWord(item));
+			if (output && !joinsPrevious && !/^[,.;:!?)]/.test(text)) {
+				output += " ";
+			}
+			output += text;
+		}
+		return cleanLyricLine(output);
+	}
+
 	function extractTimedWords(rawLine, text, lineStart) {
-		const candidates = [rawLine.syllables, rawLine.wordTimings, rawLine.tokens, Array.isArray(rawLine.words) ? rawLine.words : null]
-			.filter(Array.isArray)
-			.flat();
+		const syllables = normalizeTimedCandidates(rawLine.syllables, lineStart);
+		if (syllables.length) {
+			const syllableWords = groupSyllablesToWords(syllables, text, lineStart);
+			if (syllableWords.length) {
+				return syllableWords;
+			}
+		}
+
+		const candidates = [
+			normalizeTimedCandidates(rawLine.wordTimings, lineStart),
+			normalizeTimedCandidates(rawLine.tokens, lineStart),
+			normalizeTimedCandidates(Array.isArray(rawLine.words) ? rawLine.words : null, lineStart),
+		].flat();
 
 		if (!candidates.length) {
 			return [];
 		}
 
-		const timed = candidates
-			.map((word) => {
-				const wordText = cleanLyricLine(word.text || word.word || word.syllable || word.value || "");
+		const timed = candidates.filter((word) => text.includes(word.text) || word.text.length > 1);
+		return alignTimedWordsToText(timed, text, lineStart);
+	}
+
+	function normalizeTimedCandidates(items, lineStart) {
+		if (!Array.isArray(items)) {
+			return [];
+		}
+
+		return (items.flat ? items.flat(Infinity) : items)
+			.map((item) => {
+				const wordText = readTimedCandidateText(item);
 				if (!wordText) {
 					return null;
 				}
 
-				const start = normalizeLyricTime(word.startTimeMs ?? word.start ?? word.time ?? lineStart, word.startTimeMs != null);
-				const end = normalizeLyricTime(word.endTimeMs ?? word.end ?? word.endTime ?? start + 260, word.endTimeMs != null);
+				const hasStartMs = item?.startTimeMs != null || item?.StartTimeMs != null;
+				const hasEndMs = item?.endTimeMs != null || item?.EndTimeMs != null;
+				const start = normalizeLyricTime(item?.startTimeMs ?? item?.StartTimeMs ?? item?.start ?? item?.StartTime ?? item?.time ?? item?.Time ?? lineStart, hasStartMs);
+				let end = normalizeLyricTime(item?.endTimeMs ?? item?.EndTimeMs ?? item?.end ?? item?.EndTime ?? item?.endTime ?? start + 260, hasEndMs);
+				const duration = item?.durationMs ?? item?.DurationMs ?? item?.duration ?? item?.Duration;
+				if ((!Number.isFinite(end) || end <= start) && duration != null) {
+					end = start + normalizeLyricTime(duration, item?.durationMs != null || item?.DurationMs != null);
+				}
+
 				return {
 					text: wordText,
 					start,
 					end: Math.max(start + 80, end),
+					partOfWord: readTimedCandidatePartOfWord(item),
 				};
 			})
 			.filter(Boolean)
-			.filter((word) => text.includes(word.text) || word.text.length > 1);
+			.filter((word) => Number.isFinite(word.start) && Number.isFinite(word.end));
+	}
 
+	function readTimedCandidateText(item) {
+		if (typeof item === "string") {
+			return cleanLyricLine(item);
+		}
+
+		return cleanLyricLine(item?.text ?? item?.Text ?? item?.word ?? item?.Word ?? item?.syllable ?? item?.Syllable ?? item?.value ?? item?.Value ?? "");
+	}
+
+	function readTimedCandidatePartOfWord(item) {
+		if (!item || typeof item !== "object") {
+			return null;
+		}
+
+		const value = item.isPartOfWord ?? item.IsPartOfWord ?? item.partOfWord ?? item.PartOfWord;
+		return typeof value === "boolean" ? value : null;
+	}
+
+	function groupSyllablesToWords(syllables, text, lineStart) {
+		const hasPartFlags = syllables.some((syllable) => syllable.partOfWord !== null);
+		if (!hasPartFlags) {
+			return alignTimedWordsToText(syllables, text, lineStart);
+		}
+
+		const groups = [];
+		let group = [];
+		for (const syllable of syllables) {
+			group.push(syllable);
+			if (syllable.partOfWord === false) {
+				groups.push(group);
+				group = [];
+			}
+		}
+		if (group.length) {
+			groups.push(group);
+		}
+
+		return alignTimedWordsToText(
+			groups.map((items) => ({
+				text: cleanLyricLine(items.map((item) => item.text).join("")),
+				start: items[0]?.start ?? lineStart,
+				end: items[items.length - 1]?.end ?? lineStart + 260,
+			})),
+			text,
+			lineStart
+		);
+	}
+
+	function alignTimedWordsToText(timed, text, lineStart) {
 		const textWords = tokenizeLyricText(text).filter((token) => !token.space);
-		if (timed.length > textWords.length && textWords.length) {
+		if (!timed.length || !textWords.length) {
+			return timed;
+		}
+
+		const orderedTimed = timed
+			.filter((word) => Number.isFinite(word.start) && Number.isFinite(word.end))
+			.sort((a, b) => a.start - b.start);
+		if (!orderedTimed.length) {
+			return [];
+		}
+
+		if (orderedTimed.length === textWords.length) {
+			return textWords.map((word, index) => ({
+				text: word.text,
+				start: orderedTimed[index]?.start ?? lineStart,
+				end: orderedTimed[index]?.end ?? lineStart + 260,
+			}));
+		}
+
+		if (orderedTimed.length > textWords.length && textWords.length) {
 			return textWords.map((word, index) => {
-				const startIndex = Math.floor((index / textWords.length) * timed.length);
-				const endIndex = Math.max(startIndex, Math.floor(((index + 1) / textWords.length) * timed.length) - 1);
+				const startIndex = Math.floor((index / textWords.length) * orderedTimed.length);
+				const endIndex = Math.max(startIndex, Math.floor(((index + 1) / textWords.length) * orderedTimed.length) - 1);
 				return {
 					text: word.text,
-					start: timed[startIndex]?.start ?? lineStart,
-					end: timed[Math.min(endIndex, timed.length - 1)]?.end ?? lineStart + 260,
+					start: orderedTimed[startIndex]?.start ?? lineStart,
+					end: orderedTimed[Math.min(endIndex, orderedTimed.length - 1)]?.end ?? lineStart + 260,
 				};
 			});
 		}
 
-		return timed;
+		return estimateTimedWordsFromTokens(textWords, orderedTimed[0].start, orderedTimed[orderedTimed.length - 1].end);
 	}
 
 	function estimateLyricWords(line) {
@@ -3120,8 +4100,10 @@
 			return [];
 		}
 
-		const start = line.start;
-		const end = getLyricWordTimingEnd(line);
+		return estimateTimedWordsFromTokens(words, line.start, getLyricWordTimingEnd(line));
+	}
+
+	function estimateTimedWordsFromTokens(words, start, end) {
 		const duration = Math.max(700, end - start);
 		const totalWeight = words.reduce((sum, word) => sum + Math.max(0.85, Math.sqrt(word.text.length)), 0);
 		let cursor = start;
@@ -3192,6 +4174,14 @@
 		}
 
 		return assumeMs || number > 600 ? number : number * 1000;
+	}
+
+	function normalizeLyricSyncType(value) {
+		const type = String(value || "").trim().toUpperCase().replace(/[\s-]+/g, "_");
+		if (type === "SYLLABLE_SYNCED" || type === "LINE_SYNCED" || type === "UNSYNCED") {
+			return type;
+		}
+		return "";
 	}
 
 	function extractPerformerTag(text) {
@@ -3380,7 +4370,8 @@
 
 	function updateProgress() {
 		const duration = state.durationMs || getDurationSafe();
-		const progress = Math.max(0, Math.min(state.progressMs || getProgressSafe(), duration || 0));
+		const rawProgress = Number.isFinite(state.progressMs) ? state.progressMs : getProgressSafe();
+		const progress = duration ? clamp(rawProgress, 0, duration) : Math.max(0, rawProgress);
 		const percent = duration ? clamp((progress / duration) * 100, 0, 100) : 0;
 
 		dom.progress.dataset.progressMs = String(Math.round(progress));
@@ -3401,9 +4392,9 @@
 		const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
 		const position = ratio * duration;
 		Spicetify.Player.seek(position);
-		state.progressMs = position;
-		state.lastProgressSync = performance.now();
-		state.renderProgressDirty = true;
+		applyProgressSample(position, performance.now(), "seek", true);
+		resetProgressSyncWarmup();
+		requestAccurateProgressSync(performance.now(), true, "seek");
 		updateProgress();
 		updateActiveLyric();
 	}
@@ -3530,6 +4521,19 @@
 			title: track.name || track.title || metadata.title || metadata.name || "Unknown track",
 			artist: artists || metadata.artist_name || metadata["artist_name:1"] || metadata.album_artist_name || "",
 			album: track.album?.name || metadata.album_title || "",
+			durationMs:
+				Number(track.duration_ms) ||
+				Number(track.duration?.milliseconds) ||
+				Number(metadata.duration) ||
+				Number(metadata.duration_ms) ||
+				0,
+			isrc:
+				track.external_ids?.isrc ||
+				track.externalIds?.isrc ||
+				metadata.isrc ||
+				metadata.external_id ||
+				metadata.external_ids?.isrc ||
+				"",
 			cover: pickCover(track, metadata),
 		};
 	}
