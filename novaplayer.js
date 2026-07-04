@@ -16,6 +16,9 @@
 	const BEAUTIFUL_LYRICS_TIMEOUT_MS = 4500;
 	const CLOUD_SAMPLE_SIZE = 240;
 	const CLOUD_MAX_POINTS = 52000;
+	const DJ_X_CLOUD_TEXT = "DJ X";
+	const DJ_X_CLOUD_SAMPLE_WIDTH = 360;
+	const DJ_X_CLOUD_SAMPLE_HEIGHT = 180;
 	const MAX_QUEUE_ITEMS = 64;
 	const MAX_PLAYLIST_ITEMS = 32;
 	const DEBUG_SAMPLE_LIMIT = 120;
@@ -1162,6 +1165,7 @@
 				uri: state.trackInfo?.uri || "",
 				title: state.trackInfo?.title || "",
 				artist: state.trackInfo?.artist || "",
+				djXCloud: Boolean(state.trackInfo?.isSpotifyDjX),
 			},
 			colors: {
 				hot: cssVar("--novaplayer-hot"),
@@ -1844,6 +1848,7 @@
 		state.shuffle = Boolean(playerData.shuffle ?? Spicetify.Player.getShuffle?.());
 		state.repeat = Number(playerData.repeat ?? Spicetify.Player.getRepeat?.() ?? 0);
 		state.heart = getHeartSafe();
+		root.classList.toggle("is-dj-x-cloud", Boolean(info.isSpotifyDjX));
 		applyProgressSample(getProgressSafe(), performance.now(), "player-data", true);
 
 		if (isNewTrack || forceTransition) {
@@ -1855,7 +1860,7 @@
 				cancelPendingPaletteWork();
 			}
 			triggerTrackTransition();
-			applyCover(info.cover);
+			applyCover(info);
 			renderTrackInfo(info);
 			loadAudioAnalysis(info);
 			loadLyrics(info);
@@ -1877,11 +1882,12 @@
 		dom.nowCover.style.backgroundImage = cssBackground(info.cover);
 	}
 
-	function applyCover(cover) {
+	function applyCover(infoOrCover) {
+		const cover = typeof infoOrCover === "object" && infoOrCover ? infoOrCover.cover : infoOrCover;
 		const image = normalizeCoverUrl(cover || fallbackCover);
 
 		root.style.setProperty("--novaplayer-cover", cssBackground(image));
-		visualizer.setCover(image, state.trackUri);
+		visualizer.setCover(image, state.trackUri, typeof infoOrCover === "object" ? infoOrCover : state.trackInfo);
 	}
 
 	function applyCoverPalette(palette) {
@@ -5129,12 +5135,17 @@
 					.filter(Boolean)
 					.join(", ")
 			: "";
+		const uri = track.uri || metadata.entity_uri || metadata.uri || "";
+		const title = track.name || track.title || metadata.title || metadata.name || "Unknown track";
+		const artist = artists || metadata.artist_name || metadata["artist_name:1"] || metadata.album_artist_name || "";
+		const album = track.album?.name || metadata.album_title || "";
+		const hints = buildTrackHintText(track, metadata, { uri, title, artist, album });
 
 		return {
-			uri: track.uri || metadata.entity_uri || metadata.uri || "",
-			title: track.name || track.title || metadata.title || metadata.name || "Unknown track",
-			artist: artists || metadata.artist_name || metadata["artist_name:1"] || metadata.album_artist_name || "",
-			album: track.album?.name || metadata.album_title || "",
+			uri,
+			title,
+			artist,
+			album,
 			durationMs:
 				Number(track.duration_ms) ||
 				Number(track.duration?.milliseconds) ||
@@ -5149,7 +5160,77 @@
 				metadata.external_ids?.isrc ||
 				"",
 			cover: pickCover(track, metadata),
+			isSpotifyDjX: isSpotifyDjXTrack({ uri, title, artist, album, hints }),
 		};
+	}
+
+	function buildTrackHintText(track, metadata, base) {
+		const values = [
+			base.uri,
+			base.title,
+			base.artist,
+			base.album,
+			metadata.entity_uri,
+			metadata.context_uri,
+			metadata.title,
+			metadata.name,
+			metadata.artist_name,
+			metadata["artist_name:1"],
+			metadata.album_artist_name,
+			metadata.album_title,
+			metadata.display_title,
+			metadata.subtitle,
+			metadata.provider,
+			metadata.type,
+			metadata.entity_type,
+			track.type,
+			track.mediaType,
+			track.provider,
+		];
+		const metadataHintKey = /(ai|artist|context|dj|entity|name|provider|subtitle|title|type|uri)/i;
+
+		for (const [key, value] of Object.entries(metadata || {})) {
+			if (metadataHintKey.test(key) && (typeof value === "string" || typeof value === "number" || typeof value === "boolean")) {
+				values.push(key, value);
+			}
+		}
+
+		return values.filter(Boolean).map(String).join(" ");
+	}
+
+	function isSpotifyDjXTrack(info) {
+		const text = normalizeDjXMatchText([info.uri, info.title, info.artist, info.album, info.hints].join(" "));
+		const title = normalizeDjXMatchText(info.title);
+		const artist = normalizeDjXMatchText(info.artist);
+		const album = normalizeDjXMatchText(info.album);
+		const rest = normalizeDjXMatchText([info.artist, info.album, info.uri, info.hints].join(" "));
+
+		if (!text) {
+			return false;
+		}
+
+		if (/\bdj x\b/.test(text) || /\bdjx\b/.test(text) || (text.includes("djx") && text.includes("spotify"))) {
+			return true;
+		}
+
+		if (/\b(ai dj|spotify dj|dj spotify|spotify ai dj)\b/.test(text)) {
+			return true;
+		}
+
+		if (title === "dj" && (artist === "spotify" || album === "spotify" || /\b(ai|xavier|jernigan|spotify dj|dj x)\b/.test(rest))) {
+			return true;
+		}
+
+		return /\b(xavier|jernigan)\b/.test(text) && /\b(dj|spotify)\b/.test(text);
+	}
+
+	function normalizeDjXMatchText(value) {
+		return String(value || "")
+			.toLowerCase()
+			.normalize("NFKD")
+			.replace(/[\u0300-\u036f]/g, "")
+			.replace(/[^a-z0-9]+/g, " ")
+			.trim();
 	}
 
 	function extractQueueTrack(item) {
@@ -6427,16 +6508,20 @@ void main() {
 		gl.disable(gl.DEPTH_TEST);
 
 		const api = {
-			setCover(url, uri) {
+			setCover(url, uri, trackInfo) {
 				clearPendingSwitchApply();
 				const coverUrl = normalizeCoverUrl(url || fallbackCoverUrl);
-				if (coverUrl === visual.lastCover && visual.pointCount) {
+				const specialCloud = getSpecialPointCloud(trackInfo, uri);
+				const sourceKey = specialCloud
+					? `${specialCloud.type}:${specialCloud.text}:${specialCloud.seed}`
+					: `cover:${coverUrl}`;
+				if (sourceKey === visual.lastCover && visual.pointCount) {
 					if (visual.switchingCover) {
 						releaseRingToCurrentCover();
 					}
 					return;
 				}
-				visual.lastCover = coverUrl;
+				visual.lastCover = sourceKey;
 				const coverToken = ++visual.coverToken;
 				const activeLength = visual.pointCount * 3;
 				if (activeLength) {
@@ -6444,22 +6529,25 @@ void main() {
 				} else {
 					visual.source.fill(0);
 				}
-				loadCoverPoints(coverUrl, uri || "", coverToken)
+				const pointSource = specialCloud
+					? loadSpecialCloudPoints(specialCloud, coverToken)
+					: loadCoverPoints(coverUrl, uri || "", coverToken);
+				pointSource
 					.then((points) => {
-						if (coverToken !== visual.coverToken || coverUrl !== visual.lastCover) {
+						if (coverToken !== visual.coverToken || sourceKey !== visual.lastCover) {
 							return;
 						}
 						requestAnimationFrame(() => {
-							if (coverToken === visual.coverToken && coverUrl === visual.lastCover) {
+							if (coverToken === visual.coverToken && sourceKey === visual.lastCover) {
 								applyPointData(points, true, coverToken);
 							}
 						});
 					})
 					.catch(() => {
-						if (coverToken === visual.coverToken && coverUrl === visual.lastCover) {
+						if (coverToken === visual.coverToken && sourceKey === visual.lastCover) {
 							requestAnimationFrame(() => {
-								if (coverToken === visual.coverToken && coverUrl === visual.lastCover) {
-									applyPointData(createFallbackPoints(uri || ""), true, coverToken);
+								if (coverToken === visual.coverToken && sourceKey === visual.lastCover) {
+									applyPointData(createFallbackPoints(specialCloud?.seed || uri || ""), true, coverToken);
 								}
 							});
 						}
@@ -6896,6 +6984,128 @@ void main() {
 			return new Promise((resolve) => requestAnimationFrame(resolve));
 		}
 
+		function getSpecialPointCloud(trackInfo, uri) {
+			if (!trackInfo?.isSpotifyDjX) {
+				return null;
+			}
+
+			return {
+				type: "dj-x",
+				text: DJ_X_CLOUD_TEXT,
+				seed: trackInfo.uri || uri || "spotify-dj-x",
+			};
+		}
+
+		async function loadSpecialCloudPoints(specialCloud, coverToken) {
+			if (specialCloud?.type === "dj-x") {
+				return createDjXTextPoints(specialCloud, coverToken);
+			}
+
+			return createFallbackPoints(specialCloud?.seed || "special-cloud");
+		}
+
+		async function createDjXTextPoints(specialCloud, coverToken) {
+			const width = DJ_X_CLOUD_SAMPLE_WIDTH;
+			const height = DJ_X_CLOUD_SAMPLE_HEIGHT;
+			const sampler = document.createElement("canvas");
+			sampler.width = width;
+			sampler.height = height;
+			const ctx = sampler.getContext("2d", { willReadFrequently: true });
+			const seedBase = specialCloud.seed || "spotify-dj-x";
+			const text = specialCloud.text || DJ_X_CLOUD_TEXT;
+			const fontFamily = "'Arial Black', Impact, 'Bahnschrift Condensed', sans-serif";
+			let fontSize = 116;
+
+			ctx.clearRect(0, 0, width, height);
+			ctx.textAlign = "center";
+			ctx.textBaseline = "middle";
+			ctx.font = `900 ${fontSize}px ${fontFamily}`;
+			fontSize = Math.floor(fontSize * Math.min(1, (width * 0.88) / Math.max(1, ctx.measureText(text).width)));
+			ctx.font = `900 ${fontSize}px ${fontFamily}`;
+			ctx.lineJoin = "round";
+			ctx.lineCap = "round";
+			ctx.shadowColor = "rgba(255, 31, 151, 0.82)";
+			ctx.shadowBlur = 8;
+			ctx.strokeStyle = "rgba(255, 54, 173, 0.78)";
+			ctx.lineWidth = Math.max(8, fontSize * 0.082);
+			ctx.strokeText(text, width / 2, height * 0.53);
+			ctx.shadowBlur = 0;
+			const gradient = ctx.createLinearGradient(width * 0.08, height * 0.5, width * 0.92, height * 0.5);
+			gradient.addColorStop(0, "rgba(255, 40, 158, 0.96)");
+			gradient.addColorStop(0.44, "rgba(255, 246, 252, 0.98)");
+			gradient.addColorStop(1, "rgba(255, 93, 198, 0.92)");
+			ctx.fillStyle = gradient;
+			ctx.fillText(text, width / 2, height * 0.53);
+
+			const imageData = ctx.getImageData(0, 0, width, height).data;
+			const candidates = [];
+
+			for (let y = 0; y < height; y += 1) {
+				if (coverToken !== visual.coverToken) {
+					throw new Error("DJ X text sampling cancelled");
+				}
+
+				for (let x = 0; x < width; x += 1) {
+					const offset = (y * width + x) * 4;
+					const alpha = imageData[offset + 3] / 255;
+					if (alpha < 0.07) {
+						continue;
+					}
+
+					const r = imageData[offset];
+					const g = imageData[offset + 1];
+					const b = imageData[offset + 2];
+					const brightness = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+					const seed = seededRandom(`${seedBase}:dj-x:${x}:${y}:${r}:${g}:${b}`);
+					const keepChance = clamp(0.48 + alpha * 0.5 + brightness * 0.08, 0.42, 0.98);
+
+					if (seed > keepChance) {
+						continue;
+					}
+
+					const nx = x / (width - 1) - 0.5;
+					const ny = 0.5 - y / (height - 1);
+					const wave = Math.sin((nx + seed) * Math.PI * 7.6) * Math.cos((ny - seed) * Math.PI * 4.4);
+					const depth = clamp(-0.06 + (1 - alpha) * 0.22 + wave * 0.05 + (seed - 0.5) * 0.16, -0.34, 0.36);
+					const edgeLift = (1 - alpha) * 0.018;
+					const vivid = 1.06 + alpha * 0.12;
+
+					candidates.push({
+						x: nx * 1.46 + (seed - 0.5) * 0.01,
+						y: ny * 0.72 + Math.sin(seed * 40) * 0.008 + edgeLift,
+						z: depth,
+						r: clamp((r / 255) * vivid + 0.018, 0, 1),
+						g: clamp((g / 255) * vivid + 0.006, 0, 1),
+						b: clamp((b / 255) * vivid + 0.018, 0, 1),
+						a: clamp(0.54 + alpha * 0.42 + brightness * 0.05, 0.55, 0.98),
+						seed,
+						brightness: clamp(0.36 + brightness * 0.46 + alpha * 0.2, 0, 1),
+					});
+				}
+
+				if (y > 0 && y % COVER_SAMPLE_CHUNK_ROWS === 0) {
+					await waitForNextFrame();
+				}
+			}
+
+			if (coverToken !== visual.coverToken) {
+				throw new Error("DJ X text sampling cancelled");
+			}
+
+			if (candidates.length > CLOUD_MAX_POINTS) {
+				const stride = candidates.length / CLOUD_MAX_POINTS;
+				const items = [];
+				for (let index = 0; index < CLOUD_MAX_POINTS; index += 1) {
+					items.push(candidates[Math.floor(index * stride)]);
+				}
+				return { count: items.length, items, palette: createDjXPalette() };
+			}
+
+			return candidates.length
+				? { count: candidates.length, items: candidates, palette: createDjXPalette() }
+				: createFallbackPoints(seedBase);
+		}
+
 		async function loadCoverPoints(url, uri, coverToken) {
 			const source = normalizeCoverUrl(url || fallbackCoverUrl);
 
@@ -7247,6 +7457,17 @@ void main() {
 			{ h: 0.57, s: 0.38, l: 0.04 },
 			{ h: 0.1, s: 0.52, l: 0.088 },
 			{ h: 0.38, s: 0.34, l: 0.038 }
+		);
+	}
+
+	function createDjXPalette() {
+		return paletteFromHsl(
+			{ h: 0.91, s: 0.9, l: 0.6 },
+			{ h: 0.57, s: 0.76, l: 0.56 },
+			{ h: 0.96, s: 0.86, l: 0.76 },
+			{ h: 0.91, s: 0.46, l: 0.032 },
+			{ h: 0.92, s: 0.56, l: 0.08 },
+			{ h: 0.58, s: 0.36, l: 0.036 }
 		);
 	}
 
@@ -8306,6 +8527,14 @@ body.novaplayer-open {
 #${ROOT_ID}.is-cover-backdrop .novaplayer__cloud,
 #${ROOT_ID}.hide-cover-art.is-cover-backdrop .novaplayer__cover-echo {
 	display: none;
+}
+
+#${ROOT_ID}.is-dj-x-cloud .novaplayer__cover-echo {
+	display: none;
+}
+
+#${ROOT_ID}.is-dj-x-cloud.is-cover-backdrop .novaplayer__cloud {
+	display: block;
 }
 
 #${ROOT_ID} .novaplayer__cloud.is-fallback {
