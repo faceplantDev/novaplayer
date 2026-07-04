@@ -49,6 +49,8 @@
 	const PROGRESS_SYNC_NORMAL_INTERVAL = 260;
 	const PROGRESS_SYNC_BACKWARD_TOLERANCE_MS = 220;
 	const PROGRESS_SYNC_FORWARD_SNAP_MS = 5000;
+	const PROGRESS_SYNC_LYRIC_SNAP_MS = 120;
+	const PROGRESS_SYNC_CONTEXT_TIMEOUT_MS = 90;
 	const PROGRESS_SYNC_WARMUP_INTERVALS = [50, 100, 150, 750];
 	const BACK_VOCAL_EFFECTS = [
 		{ value: "none", label: "Off" },
@@ -1729,8 +1731,9 @@
 	}
 
 	async function readAccurateProgressSample(startedAt) {
+		const preferLiveState = state.hasWordTiming || state.hasWordHighlight;
 		const publicProgress = readPlayerProgressValue();
-		if (Number.isFinite(publicProgress)) {
+		if (!preferLiveState && Number.isFinite(publicProgress)) {
 			return { positionMs: publicProgress, startedAt: 0, source: "player-api" };
 		}
 
@@ -1740,7 +1743,7 @@
 
 		if (contextPlayer && typeof contextPlayer.getPositionState === "function") {
 			try {
-				const result = await contextPlayer.getPositionState({});
+				const result = await withTimeout(contextPlayer.getPositionState({}), PROGRESS_SYNC_CONTEXT_TIMEOUT_MS, "context player position");
 				const positionMs = Number(result?.position);
 				if (Number.isFinite(positionMs)) {
 					return { positionMs, startedAt: 0, source: "context-player" };
@@ -1756,6 +1759,10 @@
 			const timestamp = Number(playerState.timestamp);
 			const elapsed = !state.isPaused && Number.isFinite(timestamp) ? Math.max(0, Date.now() - timestamp) : 0;
 			return { positionMs: positionAsOfTimestamp + elapsed, startedAt: 0, source: "player-state" };
+		}
+
+		if (Number.isFinite(publicProgress)) {
+			return { positionMs: publicProgress, startedAt: 0, source: "player-api" };
 		}
 
 		return { positionMs: getProgressSafe(), startedAt: 0, source: "player-api" };
@@ -1778,7 +1785,7 @@
 			return;
 		}
 
-		if (hardApply || state.isPaused || !state.lastProgressSync) {
+		if (hardApply || state.isPaused || !state.lastProgressSync || shouldSnapProgressSampleForLyrics(drift, source)) {
 			state.progressMs = nextProgress;
 		} else if (!state.isPaused && drift > PROGRESS_SYNC_FORWARD_SNAP_MS) {
 			state.progressMs = nextProgress;
@@ -1796,7 +1803,31 @@
 	}
 
 	function shouldIgnoreProgressSample(drift) {
+		if (state.hasWordTiming || state.hasWordHighlight) {
+			return false;
+		}
 		return !state.isPaused && state.lastProgressSync && drift < -PROGRESS_SYNC_BACKWARD_TOLERANCE_MS;
+	}
+
+	function shouldSnapProgressSampleForLyrics(drift, source) {
+		return (
+			!state.isPaused &&
+			(state.hasWordTiming || state.hasWordHighlight) &&
+			Math.abs(drift) >= PROGRESS_SYNC_LYRIC_SNAP_MS &&
+			isLiveProgressSampleSource(source)
+		);
+	}
+
+	function isLiveProgressSampleSource(source) {
+		const value = String(source || "");
+		return (
+			value.startsWith("context-player") ||
+			value.startsWith("player-state") ||
+			value.startsWith("player-api") ||
+			value.startsWith("player-event") ||
+			value.startsWith("player-data") ||
+			value.startsWith("seek")
+		);
 	}
 
 	function updateAllFromPlayer(forceTransition, playerData = Spicetify.Player.data) {
@@ -2206,8 +2237,9 @@
 				.map((result) => (result.status === "fulfilled" ? result.value : null))
 				.filter(Boolean)
 				.filter((candidate) => Array.isArray(candidate.lines) && candidate.lines.length);
-			const best = selectBestLyricCandidate(candidates, info);
-			state.lyricProviderScores = candidates
+			const preparedCandidates = anchorLyricCandidatesToSpotifyTiming(candidates);
+			const best = selectBestLyricCandidate(preparedCandidates, info);
+			state.lyricProviderScores = preparedCandidates
 				.map((candidate) => `${candidate.label || candidate.provider}:${Math.round(candidate.score || 0)}`)
 				.slice(0, 8);
 
@@ -2358,6 +2390,205 @@
 		};
 	}
 
+	function anchorLyricCandidatesToSpotifyTiming(candidates) {
+		const spotifyReference = candidates.find((candidate) => candidate.provider === "spotify" && hasLyricCandidateLineTiming(candidate));
+		if (!spotifyReference) {
+			return candidates;
+		}
+
+		return candidates.map((candidate) => anchorLyricCandidateToReference(candidate, spotifyReference));
+	}
+
+	function anchorLyricCandidateToReference(candidate, reference) {
+		if (!candidate || candidate === reference || candidate.provider === "spotify" || !hasLyricCandidateLineTiming(candidate)) {
+			return candidate;
+		}
+
+		const matches = matchLyricCandidateLinesToReference(candidate.lines, reference.lines);
+		const primaryCount = candidate.lines.filter(isPrimaryLyricLine).length;
+		const minMatches = Math.min(3, primaryCount);
+		if (!primaryCount || matches.length < minMatches || matches.length / primaryCount < 0.35) {
+			return candidate;
+		}
+
+		return {
+			...candidate,
+			label: `${candidate.label || candidate.provider}+spotify-time`,
+			lines: candidate.lines.map((line, index) => shiftLyricLineTiming(line, getNearestLyricAnchorDelta(index, matches))),
+			timingAnchor: "spotify",
+			timingAnchorMatches: matches.length,
+		};
+	}
+
+	function hasLyricCandidateLineTiming(candidate) {
+		const syncType = normalizeLyricSyncType(candidate?.syncType);
+		return (
+			(syncType === "LINE_SYNCED" || syncType === "SYLLABLE_SYNCED") &&
+			Array.isArray(candidate?.lines) &&
+			candidate.lines.some((line) => isPrimaryLyricLine(line) && Number.isFinite(Number(line.start)))
+		);
+	}
+
+	function matchLyricCandidateLinesToReference(candidateLines, referenceLines) {
+		const references = (referenceLines || [])
+			.map((line, index) => ({
+				line,
+				index,
+				key: getComparableLyricText(line),
+			}))
+			.filter((item) => item.key.length >= 4 && isPrimaryLyricLine(item.line));
+		const usedReferences = new Set();
+		const matches = [];
+		let cursor = 0;
+
+		(candidateLines || []).forEach((line, candidateIndex) => {
+			if (!isPrimaryLyricLine(line)) {
+				return;
+			}
+
+			const key = getComparableLyricText(line);
+			if (key.length < 4) {
+				return;
+			}
+			const match =
+				findReferenceLyricMatch(key, references, usedReferences, cursor) ||
+				findReferenceLyricMatch(key, references, usedReferences, 0);
+			if (!match) {
+				return;
+			}
+
+			usedReferences.add(match.index);
+			cursor = Math.max(cursor, match.sequenceIndex + 1);
+			matches.push({
+				candidateIndex,
+				referenceIndex: match.index,
+				delta: Number(match.line.start) - Number(line.start),
+			});
+		});
+
+		return matches.filter((match) => Number.isFinite(match.delta));
+	}
+
+	function findReferenceLyricMatch(key, references, usedReferences, startSequence) {
+		if (!key) {
+			return null;
+		}
+
+		let best = null;
+		for (let sequenceIndex = Math.max(0, startSequence); sequenceIndex < references.length; sequenceIndex += 1) {
+			const reference = references[sequenceIndex];
+			if (!reference || usedReferences.has(reference.index)) {
+				continue;
+			}
+
+			const score = getLyricAnchorTextScore(key, reference.key);
+			if (score < 0.7) {
+				continue;
+			}
+
+			if (!best || score > best.score) {
+				best = { ...reference, sequenceIndex, score };
+				if (score >= 1) {
+					break;
+				}
+			}
+		}
+		return best;
+	}
+
+	function getLyricAnchorTextScore(candidateKey, referenceKey) {
+		if (!candidateKey || !referenceKey) {
+			return 0;
+		}
+		if (candidateKey === referenceKey) {
+			return 1;
+		}
+
+		const shorter = Math.min(candidateKey.length, referenceKey.length);
+		const longer = Math.max(candidateKey.length, referenceKey.length);
+		if (shorter >= 8 && (candidateKey.includes(referenceKey) || referenceKey.includes(candidateKey))) {
+			return shorter / longer;
+		}
+		return 0;
+	}
+
+	function getNearestLyricAnchorDelta(lineIndex, matches) {
+		const exact = matches.find((match) => match.candidateIndex === lineIndex);
+		if (exact) {
+			return exact.delta;
+		}
+
+		let previous = null;
+		let next = null;
+		for (const match of matches) {
+			if (match.candidateIndex < lineIndex) {
+				previous = match;
+			} else if (match.candidateIndex > lineIndex) {
+				next = match;
+				break;
+			}
+		}
+
+		if (previous && next) {
+			const previousDistance = lineIndex - previous.candidateIndex;
+			const nextDistance = next.candidateIndex - lineIndex;
+			return previousDistance <= nextDistance ? previous.delta : next.delta;
+		}
+		return (previous || next)?.delta || 0;
+	}
+
+	function shiftLyricLineTiming(line, delta) {
+		if (!Number.isFinite(delta) || Math.abs(delta) < 1) {
+			return line;
+		}
+
+		const start = shiftLyricTime(line.start, delta, 0);
+		const end = Math.max(start + 80, shiftLyricTime(line.end, delta, start + 80));
+		return {
+			...line,
+			start,
+			end,
+			words: Array.isArray(line.words) ? line.words.map((word) => shiftLyricWordTiming(word, delta)) : [],
+			backVocals: Array.isArray(line.backVocals) ? line.backVocals.map((backVocal) => shiftBackVocalTiming(backVocal, delta)) : [],
+		};
+	}
+
+	function shiftLyricWordTiming(word, delta) {
+		const start = shiftLyricTime(word?.start, delta, 0);
+		const end = Math.max(start + 80, shiftLyricTime(word?.end, delta, start + 80));
+		return {
+			...word,
+			start,
+			end,
+			segments: Array.isArray(word?.segments) ? word.segments.map((segment) => shiftLyricSegmentTiming(segment, delta)) : [],
+		};
+	}
+
+	function shiftLyricSegmentTiming(segment, delta) {
+		const start = shiftLyricTime(segment?.start, delta, 0);
+		const end = Math.max(start + 45, shiftLyricTime(segment?.end, delta, start + 45));
+		return {
+			...segment,
+			start,
+			end,
+		};
+	}
+
+	function shiftBackVocalTiming(backVocal, delta) {
+		const start = shiftLyricTime(backVocal?.start, delta, 0);
+		const end = Math.max(start + 80, shiftLyricTime(backVocal?.end, delta, start + 80));
+		return {
+			...backVocal,
+			start,
+			end,
+		};
+	}
+
+	function shiftLyricTime(value, delta, fallback) {
+		const number = Number(value);
+		return Number.isFinite(number) ? Math.max(0, number + delta) : fallback;
+	}
+
 	function selectBestLyricCandidate(candidates, info) {
 		let best = null;
 		for (const candidate of candidates) {
@@ -2401,6 +2632,9 @@
 			return false;
 		}
 		if (!current) {
+			return true;
+		}
+		if (candidate.timingAnchor && candidate.timingAnchor !== current.timingAnchor) {
 			return true;
 		}
 
@@ -3419,10 +3653,10 @@
 	}
 
 	function completeLyricCarouselTransition() {
-		dom.lyrics.classList.remove("is-lyric-carousel-running");
 		for (const ghost of state.lyricCarouselGhosts.splice(0)) {
 			ghost.remove();
 		}
+		dom.lyrics.classList.remove("is-lyric-carousel-running");
 	}
 
 	function cancelLyricCarouselAnimations() {
@@ -3522,23 +3756,24 @@
 			return null;
 		}
 
-		const current = state.lyrics[currentIndex];
-		const wordBreak = findWordInstrumentalBreakAt(current, position);
-		if (wordBreak && !hasTimedVocalAtPosition(position, currentIndex, currentIndex + 1)) {
+		const sourceIndex = findInstrumentalSourceIndexAtPosition(currentIndex, position);
+		const current = state.lyrics[sourceIndex];
+		const wordBreak = sourceIndex === currentIndex ? findWordInstrumentalBreakAt(current, position) : null;
+		if (wordBreak && !hasTimedVocalAtPosition(position, sourceIndex, sourceIndex + 1)) {
 			return {
-				key: `word:${currentIndex}:${wordBreak.wordIndex}:${wordBreak.nextWordIndex}:${Math.round(wordBreak.start)}:${Math.round(wordBreak.end)}`,
+				key: `word:${sourceIndex}:${wordBreak.wordIndex}:${wordBreak.nextWordIndex}:${Math.round(wordBreak.start)}:${Math.round(wordBreak.end)}`,
 				previous: current,
 				next: current,
 				previousText: wordBreak.previousText,
 				nextText: wordBreak.nextText,
 				start: wordBreak.start,
 				end: wordBreak.end,
-				previousIndex: currentIndex,
-				nextIndex: currentIndex,
+				previousIndex: sourceIndex,
+				nextIndex: sourceIndex,
 			};
 		}
 
-		const nextIndex = findNextRenderableLyricIndex(currentIndex + 1);
+		const nextIndex = findNextInstrumentalTargetIndex(sourceIndex + 1, current);
 		const next = nextIndex >= 0 ? state.lyrics[nextIndex] : null;
 		const breakInfo = getLineInstrumentalBreak(current, Number(next ? next.start : (state.durationMs || current.end || 0)));
 
@@ -3549,17 +3784,17 @@
 		if (position < breakInfo.start || position >= breakInfo.end) {
 			return null;
 		}
-		if (hasTimedVocalAtPosition(position, currentIndex, nextIndex)) {
+		if (hasTimedVocalAtPosition(position, sourceIndex, nextIndex)) {
 			return null;
 		}
 
 		return {
-			key: `${currentIndex}:${nextIndex}:${Math.round(breakInfo.start)}:${Math.round(breakInfo.end)}`,
+			key: `${sourceIndex}:${nextIndex}:${Math.round(breakInfo.start)}:${Math.round(breakInfo.end)}`,
 			previous: current,
 			next,
 			start: breakInfo.start,
 			end: breakInfo.end,
-			previousIndex: currentIndex,
+			previousIndex: sourceIndex,
 			nextIndex,
 		};
 	}
@@ -3697,6 +3932,67 @@
 			}
 		}
 		return -1;
+	}
+
+	function findNextInstrumentalTargetIndex(startIndex, currentLine) {
+		for (let index = Math.max(0, startIndex); index < state.lyrics.length; index += 1) {
+			const candidate = state.lyrics[index];
+			if (!isPrimaryLyricLine(candidate)) {
+				continue;
+			}
+			if (isRepeatedInstrumentalHoldLine(currentLine, candidate)) {
+				continue;
+			}
+			return index;
+		}
+		return -1;
+	}
+
+	function findInstrumentalSourceIndexAtPosition(currentIndex, position) {
+		const currentLine = state.lyrics[currentIndex];
+		if (!isPrimaryLyricLine(currentLine)) {
+			return currentIndex;
+		}
+
+		for (let index = currentIndex - 1; index >= 0; index -= 1) {
+			const previousLine = state.lyrics[index];
+			if (!isPrimaryLyricLine(previousLine)) {
+				continue;
+			}
+			if (!isRepeatedInstrumentalHoldLine(previousLine, currentLine)) {
+				return currentIndex;
+			}
+
+			const targetIndex = findNextInstrumentalTargetIndex(index + 1, previousLine);
+			const targetLine = targetIndex >= 0 ? state.lyrics[targetIndex] : null;
+			const breakInfo = getLineInstrumentalBreak(previousLine, Number(targetLine ? targetLine.start : (state.durationMs || previousLine.end || 0)));
+			if (breakInfo && position >= breakInfo.start && position < breakInfo.end) {
+				return index;
+			}
+			return currentIndex;
+		}
+
+		return currentIndex;
+	}
+
+	function isRepeatedInstrumentalHoldLine(currentLine, candidateLine) {
+		if (!currentLine || !candidateLine || getComparableLyricText(currentLine) !== getComparableLyricText(candidateLine)) {
+			return false;
+		}
+		const candidateStart = Number(candidateLine.start);
+		if (!Number.isFinite(candidateStart)) {
+			return false;
+		}
+		const repeatedBreakStart = getInstrumentalBreakStart(currentLine, candidateStart);
+		return candidateStart - repeatedBreakStart >= INSTRUMENTAL_MIN_VISIBLE_MS;
+	}
+
+	function getComparableLyricText(line) {
+		return tokenizeLyricText(line?.text || "")
+			.filter((token) => !token.space)
+			.map((token) => normalizeLyricMatchToken(token.text))
+			.filter(Boolean)
+			.join("");
 	}
 
 	function hasTimedVocalAtPosition(position, currentIndex, nextIndex) {
@@ -8355,7 +8651,6 @@ body.novaplayer-open {
 #${ROOT_ID} .novaplayer__lyrics.is-lyric-carousel-running .novaplayer__lyric-current:not(.novaplayer__lyric-ghost),
 #${ROOT_ID} .novaplayer__lyrics.is-lyric-carousel-running .novaplayer__lyric-next:not(.novaplayer__lyric-ghost) {
 	visibility: hidden;
-	opacity: 0;
 	transition: none;
 }
 
